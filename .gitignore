@@ -12,6 +12,7 @@ build/
 dist/
 release/
 *.zip
+!/portable/_internal/base_library.zip
 *.tmp
 
 # Local source-run application data

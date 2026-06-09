@@ -1,2 +1,15 @@
-# Auto detect text files and perform LF normalization
+# Normalize source and documentation, but never transform packaged binaries.
 * text=auto
+
+*.exe binary
+*.dll binary
+*.pyd binary
+*.zip binary
+*.pak binary
+*.dat binary
+*.bin binary
+*.traineddata binary
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
