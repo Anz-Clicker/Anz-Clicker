@@ -697,7 +697,7 @@ class ActionRunner:
         self._publish(f"{self.PROGRESS_PREFIX}{current}/{total}")
 
     def _apply_settings(self) -> None:
-        screen_tools.configure_ocr(Path(__file__).resolve().parent)
+        screen_tools.configure_ocr(Path(__file__).resolve().parent.parent)
         input_controller.configure_input_timing(
             mouse_animation_speed=self.settings.mouse_animation_speed,
             enhanced_humanlike_mouse=self.settings.enhanced_humanlike_mouse,

@@ -6,17 +6,24 @@ import sys
 from PySide6.QtGui import QIcon
 
 
+SOURCE_ROOT = Path(__file__).resolve().parents[2]
+
+
 def resource_path(filename: str) -> Path:
     bundle_dir = getattr(sys, "_MEIPASS", None)
     if bundle_dir:
         return Path(bundle_dir) / filename
-    return Path(__file__).resolve().parent.parent / filename
+    if filename == "zabian_logo.png":
+        return SOURCE_ROOT / "assets" / "icons" / filename
+    if filename.startswith("icons/"):
+        return SOURCE_ROOT / "assets" / "icons" / "themes" / filename.removeprefix("icons/")
+    return SOURCE_ROOT / filename
 
 
 def app_base_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent.parent
+    return SOURCE_ROOT
 
 
 def app_icon(name: str, size: int = 22, dark: bool = True) -> QIcon:

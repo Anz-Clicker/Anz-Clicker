@@ -5,6 +5,13 @@ import math
 import random
 from pathlib import Path
 import shutil
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
 from actions import Action, ActionType, ExecutionGroup, PositionMode, ScreenArea
 from app_settings import AppSettings
@@ -13,7 +20,7 @@ from preset_store import PresetStore
 from anz_clicker_qt.widgets import target_label
 
 
-TMP_ROOT = Path("tmp_qt_doc_test") / "smoke_test"
+TMP_ROOT = ROOT / "tmp_qt_doc_test" / "smoke_test"
 
 
 def reset_tmp_root() -> None:

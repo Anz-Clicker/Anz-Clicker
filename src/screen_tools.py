@@ -25,7 +25,8 @@ TESSDATA_DIR: Path | None = None
 def configure_ocr(root: str | Path) -> None:
     global TESSERACT_CMD
     global TESSDATA_DIR
-    roots = [Path(root)]
+    root_path = Path(root)
+    roots = [root_path, root_path / "vendor"]
     bundle_dir = getattr(sys, "_MEIPASS", None)
     if bundle_dir:
         roots.insert(0, Path(bundle_dir))

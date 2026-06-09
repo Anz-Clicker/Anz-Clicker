@@ -1,6 +1,6 @@
 # Changelog
 
-All notable Anz Clicker changes are grouped by version. The current source version is read from `anz_clicker_qt/version.py`.
+All notable Anz Clicker changes are grouped by version. The current source version is read from `src/anz_clicker_qt/version.py`.
 
 ## 1.2.0 - 2026-06-08
 
@@ -21,7 +21,7 @@ All notable Anz Clicker changes are grouped by version. The current source versi
 
 - Rebuilt the app as the modern PySide6/Qt interface with dark/light mode styling.
 - Added portable PyInstaller packaging through `Anz Clicker Portable.spec`.
-- Added static theme-aware icons under `icons/dark` and `icons/light`.
+- Added static theme-aware icons, now stored under `assets/icons/themes/dark` and `assets/icons/themes/light`.
 - Added Settings persistence for mouse animation speed, enhanced humanlike movement, click/key press timing, default script folder, keybinds, and window position/size.
 - Added a reusable Settings panel with reset-to-defaults support.
 - Added custom action presets, custom action overwrite confirmation, custom-action deletion, default-action editing, and action order/hide controls.

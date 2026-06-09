@@ -4,21 +4,21 @@ This document is the source of truth for project conventions that should be reus
 
 ## Project Shape
 
-- `anz_clicker_qt.py` is the Qt entry point.
-- `anz_clicker_qt/main_window.py` owns the main window, top-level layout, script commands, runner wiring, and high-level UI coordination.
-- `anz_clicker_qt/action_editor.py` owns `ActionEditorDialog`, including action-specific editor panels, field loading, validation, and saving editor values back into `Action` objects.
-- `anz_clicker_qt/dialogs.py` owns standalone dialogs such as Settings and Edit Action Order.
-- `anz_clicker_qt/widgets.py` owns reusable widgets, table models/views, shared action editor controls, help buttons, and screen-area selection helpers.
-- `anz_clicker_qt/constants.py` owns shared UI/action constants used across Qt modules.
-- `anz_clicker_qt/theme.py` owns global light/dark Qt stylesheet generation.
-- `anz_clicker_qt/icons.py` owns icon/resource lookup for source runs and PyInstaller bundles.
-- `actions.py` owns serializable action data, action types, execution groups, position modes, and screen-area data.
-- `runner.py` owns execution, pause/stop behavior, sampled runtime planning, and time-based progress.
-- `input_controller.py` owns mouse/keyboard input and human-like timing behavior.
-- `screen_tools.py` owns screenshots, picture matching, color checks, screen-change checks, and OCR helpers.
-- `app_settings.py` owns persistent app-level settings.
-- `preset_store.py` owns default actions, custom actions, action order, and visibility.
-- `smoke_test.py` is the quick regression suite for serialization/settings/preset behavior.
+- `src/anz_clicker_qt.py` is the Qt entry point.
+- `src/anz_clicker_qt/main_window.py` owns the main window, top-level layout, script commands, runner wiring, and high-level UI coordination.
+- `src/anz_clicker_qt/action_editor.py` owns `ActionEditorDialog`, including action-specific editor panels, field loading, validation, and saving editor values back into `Action` objects.
+- `src/anz_clicker_qt/dialogs.py` owns standalone dialogs such as Settings and Edit Action Order.
+- `src/anz_clicker_qt/widgets.py` owns reusable widgets, table models/views, shared action editor controls, help buttons, and screen-area selection helpers.
+- `src/anz_clicker_qt/constants.py` owns shared UI/action constants used across Qt modules.
+- `src/anz_clicker_qt/theme.py` owns global light/dark Qt stylesheet generation.
+- `src/anz_clicker_qt/icons.py` owns icon/resource lookup for source runs and PyInstaller bundles.
+- `src/actions.py` owns serializable action data, action types, execution groups, position modes, and screen-area data.
+- `src/runner.py` owns execution, pause/stop behavior, sampled runtime planning, and time-based progress.
+- `src/input_controller.py` owns mouse/keyboard input and human-like timing behavior.
+- `src/screen_tools.py` owns screenshots, picture matching, color checks, screen-change checks, and OCR helpers.
+- `src/app_settings.py` owns persistent app-level settings.
+- `src/preset_store.py` owns default actions, custom actions, action order, and visibility.
+- `tests/smoke_test.py` is the quick regression suite for serialization/settings/preset behavior.
 
 ## Core Design Rules
 
@@ -65,7 +65,7 @@ When changing the editor:
 - Keep action-specific UI in panel builders such as `_build_mouse_panel()`, `_build_picture_panel()`, and `_build_screen_text_panel()`.
 - Keep saving split into clear steps: parse text fields, build the base action with `_action_from_fields()`, apply location/area fields with `_apply_location_fields()`, apply simple key overrides, validate, then accept.
 - Do not put main-window script behavior in the action editor. The editor should return a configured `Action`; `MainWindow` decides where that action is inserted or saved.
-- After changing editor behavior, construct every built-in action editor offscreen and run `python smoke_test.py`.
+- After changing editor behavior, construct every built-in action editor offscreen and run `python tests/smoke_test.py`.
 
 ## Help Question-Mark Buttons
 
@@ -107,7 +107,7 @@ Use this checklist when adding an action type:
 9. Add table labels in `widgets.py` if the Target/Delay/Repeat/Notes display needs special handling.
 10. Add screen, OCR, picture, or input helpers to `screen_tools.py` or `input_controller.py`, not directly in the UI.
 11. Update this wiki if the action introduces a reusable pattern.
-12. Run `python smoke_test.py`.
+12. Run `python tests/smoke_test.py`.
 
 `Launch Anz Clicker Script` and `Launch Anz Clicker Script and Wait` reuse the Launch-style path field but must point to an Anz Clicker JSON script. The non-wait action starts the nested script as a background timeline and immediately lets the parent sequence continue. The wait action runs the nested script as a nested sequence and blocks the parent sequence until the nested script's sequential and background work is finished.
 
@@ -156,15 +156,15 @@ Animated movement duration is controlled globally by Settings, not by an action-
 
 ## Versioning
 
-- The source of truth for the app version is `anz_clicker_qt/version.py`.
+- The source of truth for the app version is `src/anz_clicker_qt/version.py`.
 - UI code should import `APP_VERSION` from `anz_clicker_qt.constants`, which re-exports the version for existing callers.
-- Update `CHANGELOG.md` whenever changing `APP_VERSION`.
+- Update `docs/CHANGELOG.md` whenever changing `APP_VERSION`.
 - Use semantic versioning loosely: patch for bug fixes, minor for user-facing features, and major only for breaking workflow or storage changes.
 - Packaging scripts should eventually read `APP_VERSION` so release folder and ZIP names stay consistent.
 
 ## Icons And Theme
 
-- Static icons live under `icons/dark/` and `icons/light/`.
+- Static icons live under `assets/icons/themes/dark/` and `assets/icons/themes/light/`.
 - Load icons through `app_icon(name, dark=...)`.
 - Do not hard-code paths to icon files in UI code.
 - Theme-aware UI should request the current theme variant when icons are refreshed.
@@ -198,32 +198,32 @@ Animated movement duration is controlled globally by Settings, not by an action-
 
 Wait-for-screen-text uses OCR through `screen_tools.py`.
 
-- Prefer bundled `tesseract/tesseract.exe` when present.
+- Prefer bundled `vendor/tesseract/tesseract.exe` during source runs and packaged `tesseract/tesseract.exe` in releases.
 - Keep OCR temp files under the app/captures area, not arbitrary system temp paths.
 - OCR text matching should support plain string and regular expression modes.
-- OCR-related packaging changes belong in `Anz Clicker Portable.spec`.
+- OCR-related packaging changes belong in `packaging/Anz Clicker Portable.spec`.
 
 ## Testing And Packaging
 
 Run the smoke test after refactors:
 
 ```powershell
-python smoke_test.py
+python tests/smoke_test.py
 ```
 
 Useful import check:
 
 ```powershell
-python -c "import anz_clicker_qt.widgets, anz_clicker_qt.main_window, anz_clicker_qt.app; print('imports ok')"
+python -c "import sys; sys.path.insert(0, 'src'); import anz_clicker_qt.widgets, anz_clicker_qt.main_window, anz_clicker_qt.app; print('imports ok')"
 ```
 
 Packaging should use the single canonical spec:
 
 ```powershell
-pyinstaller "Anz Clicker Portable.spec"
+pyinstaller "packaging/Anz Clicker Portable.spec"
 ```
 
-Do not add new duplicate spec files. Update `Anz Clicker Portable.spec` when bundled assets change.
+Do not add new duplicate spec files. Update `packaging/Anz Clicker Portable.spec` when bundled assets change.
 
 ## Future Refactor Targets
 

@@ -4,7 +4,7 @@ Windows desktop automation tool for building and running queued mouse, keyboard,
 
 For developer conventions and reusable project patterns, see [docs/ANZ_CLICKER_WIKI.md](docs/ANZ_CLICKER_WIKI.md).
 
-Version history is tracked in [CHANGELOG.md](CHANGELOG.md). The current app version is defined in `anz_clicker_qt/version.py`.
+Version history is tracked in [docs/CHANGELOG.md](docs/CHANGELOG.md). The current app version is defined in `src/anz_clicker_qt/version.py`.
 
 ## Features in this prototype
 
@@ -30,7 +30,13 @@ Version history is tracked in [CHANGELOG.md](CHANGELOG.md). The current app vers
 ## Run
 
 ```powershell
-python anz_clicker_qt.py
+python src/anz_clicker_qt.py
+```
+
+Install development dependencies with:
+
+```powershell
+python -m pip install -r docs/requirements.txt
 ```
 
 ## Portable Build
@@ -41,6 +47,20 @@ be installed.
 
 For published versions, the same portable directory should also be compressed
 and attached to the corresponding GitHub Release.
+
+## Repository Layout
+
+```text
+assets/       Branding and theme icons
+config/       Example configuration and preset files
+docs/         Changelog, developer wiki, requirements, and portable notes
+packaging/    Canonical PyInstaller specification
+portable/     Ready-to-run Windows distribution
+scripts/      Default user script workspace
+src/          Application source code
+tests/        Smoke and regression tests
+vendor/       Bundled third-party runtimes such as Tesseract
+```
 
 ## Notes
 
