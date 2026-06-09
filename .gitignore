@@ -1,0 +1,32 @@
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Build and release output
+build/
+dist/
+release/
+*.exe
+*.zip
+*.tmp
+
+# Local application data
+anz_clicker_settings.json
+captures/
+tmp_qt_doc_test/
+
+# User-created scripts and presets
+scripts/*.json
+anz_clicker_presets.json
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,0 +1,816 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from PySide6.QtCore import QCoreApplication, QEvent, QModelIndex, QPoint, QRect, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QKeyEvent, QMouseEvent, QPainter, QPainterPath, QPen, QRegion
+from PySide6.QtGui import QKeySequence
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QStyledItemDelegate,
+    QTableView,
+    QVBoxLayout,
+    QWidget,
+)
+from PySide6.QtCore import QAbstractTableModel
+
+from actions import Action, ActionType, PositionMode, ScreenArea
+from .constants import CAPTURE_KEY_ACTIONS, SCRIPT_ACTIONS, SIMPLE_ACTION_KEYS
+from .icons import app_icon
+
+
+PICTURE_ACTIONS = {ActionType.WAIT_FOR_PICTURE.value, ActionType.AUTO_PICTURE_CLICKER.value}
+
+
+def make_help_button(parent: QWidget, title: str, message: str) -> QPushButton:
+    button = QPushButton("?")
+    button.setObjectName("HelpButton")
+    button.setToolTip("What does this do?")
+    button.setFixedSize(30, 30)
+    button.clicked.connect(lambda: QMessageBox.information(parent, title, message))
+    return button
+
+
+def make_help_label(parent: QWidget, text: str, message: str) -> QWidget:
+    row = QWidget()
+    layout = QHBoxLayout(row)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(6)
+    layout.addWidget(QLabel(text))
+    layout.addWidget(make_help_button(parent, text, message))
+    layout.addStretch(1)
+    return row
+
+
+def plain_number_field(field: QSpinBox) -> None:
+    field.setButtonSymbols(QSpinBox.NoButtons)
+    field.setKeyboardTracking(False)
+    field.setMinimumWidth(92)
+    field.setMinimumHeight(34)
+
+
+def time_row(minutes: QSpinBox, seconds: QSpinBox, milliseconds: QSpinBox) -> QWidget:
+    row = QWidget()
+    layout = QHBoxLayout(row)
+    layout.setContentsMargins(0, 2, 0, 2)
+    layout.setSpacing(8)
+    for field, label in ((minutes, "min"), (seconds, "sec"), (milliseconds, "ms")):
+        field.setMinimumWidth(92)
+        layout.addWidget(field)
+        layout.addWidget(QLabel(label))
+    layout.addStretch(1)
+    return row
+
+
+class GeneralActionSettings:
+    """Shared editor fields that every action supports."""
+
+    def __init__(self, action: Action) -> None:
+        self.delay_minutes = QSpinBox()
+        self.delay_seconds = QSpinBox()
+        self.delay_milliseconds = QSpinBox()
+        self.random_delay_minutes = QSpinBox()
+        self.random_delay_seconds = QSpinBox()
+        self.random_delay_milliseconds = QSpinBox()
+        self.repeat = QSpinBox()
+        self.random_repeat = QSpinBox()
+        self.comment = QLineEdit()
+        self.repeat_label = QLabel("Repeat Count")
+        self.repeat_row_widget = self._repeat_row()
+
+        for field in (self.delay_minutes, self.random_delay_minutes):
+            field.setRange(0, 999)
+        for field in (self.delay_seconds, self.random_delay_seconds):
+            field.setRange(0, 59)
+        for field in (self.delay_milliseconds, self.random_delay_milliseconds):
+            field.setRange(0, 999)
+        self.repeat.setRange(1, 999999)
+        self.random_repeat.setRange(0, 999999)
+        for field in self.number_fields():
+            plain_number_field(field)
+        self.load_from_action(action)
+
+    def number_fields(self) -> tuple[QSpinBox, ...]:
+        return (
+            self.delay_minutes,
+            self.delay_seconds,
+            self.delay_milliseconds,
+            self.random_delay_minutes,
+            self.random_delay_seconds,
+            self.random_delay_milliseconds,
+            self.repeat,
+            self.random_repeat,
+        )
+
+    def add_to_form(self, form: QFormLayout) -> None:
+        form.addRow("Delay", time_row(self.delay_minutes, self.delay_seconds, self.delay_milliseconds))
+        form.addRow("+ Random Delay", time_row(self.random_delay_minutes, self.random_delay_seconds, self.random_delay_milliseconds))
+        form.addRow(self.repeat_label, self.repeat_row_widget)
+        form.addRow("Comment", self.comment)
+
+    def set_repeat_visible(self, visible: bool) -> None:
+        self.repeat_label.setVisible(visible)
+        self.repeat_row_widget.setVisible(visible)
+        if not visible:
+            self.repeat.setValue(1)
+            self.random_repeat.setValue(0)
+
+    def load_from_action(self, action: Action) -> None:
+        self.delay_minutes.setValue(action.delay_minutes)
+        self.delay_seconds.setValue(action.delay_seconds)
+        self.delay_milliseconds.setValue(action.delay_milliseconds)
+        self.random_delay_minutes.setValue(action.random_delay_minutes)
+        self.random_delay_seconds.setValue(action.random_delay_seconds)
+        self.random_delay_milliseconds.setValue(action.random_delay_milliseconds)
+        self.repeat.setValue(max(1, action.repeat))
+        self.random_repeat.setValue(action.random_repeat)
+        self.comment.setText(action.comment)
+
+    def apply_to_action(self, action: Action) -> None:
+        action.delay_minutes = self.delay_minutes.value()
+        action.delay_seconds = self.delay_seconds.value()
+        action.delay_milliseconds = self.delay_milliseconds.value()
+        action.random_delay_minutes = self.random_delay_minutes.value()
+        action.random_delay_seconds = self.random_delay_seconds.value()
+        action.random_delay_milliseconds = self.random_delay_milliseconds.value()
+        action.repeat = self.repeat.value()
+        action.random_repeat = self.random_repeat.value()
+        action.comment = self.comment.text().strip()
+
+    def _repeat_row(self) -> QWidget:
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 2, 0, 2)
+        layout.setSpacing(8)
+        layout.addWidget(self.repeat)
+        layout.addWidget(QLabel("+ random"))
+        layout.addWidget(self.random_repeat)
+        layout.addStretch(1)
+        return row
+
+
+def delay_label(action: Action) -> str:
+    base = compact_time_label(action.delay_minutes, action.delay_seconds, action.delay_milliseconds)
+    if action.random_delay_minutes or action.random_delay_seconds or action.random_delay_milliseconds:
+        random_part = compact_time_label(action.random_delay_minutes, action.random_delay_seconds, action.random_delay_milliseconds)
+        return f"{base} (+{random_part})"
+    return base
+
+
+def compact_time_label(minutes: int, seconds: int, milliseconds: int) -> str:
+    parts: list[str] = []
+    if minutes:
+        parts.append(f"{minutes}m")
+    if seconds:
+        parts.append(f"{seconds}s")
+    if milliseconds or not parts:
+        parts.append(f"{milliseconds}ms")
+    return " ".join(parts)
+
+
+def repeat_label(action: Action) -> str:
+    if action.random_repeat:
+        return f"{action.repeat} (+{action.random_repeat})"
+    return str(action.repeat)
+
+
+def target_label(action: Action) -> str:
+    if action.action_type in CAPTURE_KEY_ACTIONS:
+        return action.key or ""
+    if action.action_type in SIMPLE_ACTION_KEYS:
+        return SIMPLE_ACTION_KEYS[action.action_type]
+    if action.position_mode == PositionMode.AREA.value and action.area and action.area.is_valid():
+        return "Random Area"
+    if action.action_type == ActionType.WAIT_FOR_PIXEL_COLOR.value:
+        coords = f"{action.pixel_x}, {action.pixel_y}" if action.pixel_x is not None and action.pixel_y is not None else "Pixel"
+        return f"{coords} -> ({action.pixel_r}, {action.pixel_g}, {action.pixel_b})"
+    if action.action_type in PICTURE_ACTIONS:
+        if isinstance(action.picture_area, ScreenArea) and action.picture_area.is_valid():
+            return f"Area {action.picture_area.summary()}"
+        return Path(action.picture_path).name if action.picture_path else ""
+    if action.action_type == ActionType.WAIT_FOR_SCREEN_TEXT.value:
+        if isinstance(action.screen_text_area, ScreenArea) and action.screen_text_area.is_valid():
+            return f"Area {action.screen_text_area.summary()}"
+        return action.screen_text_pattern
+    if action.action_type in SCRIPT_ACTIONS:
+        return Path(action.launch_path).name if action.launch_path else ""
+    return action.position_summary() or action.key or action.launch_path or ""
+
+
+def action_row_values(action: Action) -> tuple[bool, str, str, str, str, str]:
+    return (
+        action.enabled,
+        action.preset_name or action.action_type,
+        target_label(action),
+        delay_label(action),
+        repeat_label(action),
+        action.comment,
+    )
+
+
+class ActionTableModel(QAbstractTableModel):
+    HEADERS = ["#", "Enabled", "Action", "Target", "Delay", "Repeat", "Notes"]
+
+    def __init__(self, actions: list[Action] | None = None) -> None:
+        super().__init__()
+        self.actions = actions or []
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        return 0 if parent.isValid() else len(self.actions)
+
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        return 0 if parent.isValid() else len(self.HEADERS)
+
+    def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole):
+        if role != Qt.DisplayRole:
+            return None
+        if orientation == Qt.Horizontal:
+            return self.HEADERS[section]
+        return str(section + 1)
+
+    def flags(self, index: QModelIndex) -> Qt.ItemFlags:
+        if not index.isValid():
+            return Qt.NoItemFlags
+        flags = Qt.ItemIsSelectable | Qt.ItemIsEnabled
+        if index.column() == 1:
+            flags |= Qt.ItemIsUserCheckable
+        return flags
+
+    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
+        if not index.isValid():
+            return None
+        enabled, action_name, target, delay, repeat, notes = action_row_values(self.actions[index.row()])
+        col = index.column()
+
+        if role == Qt.DisplayRole:
+            values = {
+                0: str(index.row() + 1),
+                2: action_name,
+                3: target,
+                4: delay,
+                5: repeat,
+                6: notes,
+            }
+            return values.get(col, "")
+
+        if role == Qt.CheckStateRole and col == 1:
+            return Qt.Checked if enabled else Qt.Unchecked
+
+        if role == Qt.ForegroundRole and not enabled:
+            return QColor("#71839f")
+
+        if role == Qt.TextAlignmentRole and col in {0, 1, 4, 5}:
+            return int(Qt.AlignCenter)
+
+        return None
+
+    def setData(self, index: QModelIndex, value, role: int = Qt.EditRole) -> bool:
+        if not index.isValid():
+            return False
+        if index.column() == 1 and role == Qt.CheckStateRole:
+            self.actions[index.row()].enabled = value == Qt.Checked
+            self.dataChanged.emit(self.index(index.row(), 0), self.index(index.row(), self.columnCount() - 1), [Qt.CheckStateRole, Qt.ForegroundRole, Qt.DisplayRole])
+            return True
+        return False
+
+    def add_action(self, action: Action) -> None:
+        insert_at = len(self.actions)
+        self.beginInsertRows(QModelIndex(), insert_at, insert_at)
+        self.actions.append(action)
+        self.endInsertRows()
+
+    def remove_row(self, row_index: int) -> None:
+        if row_index < 0 or row_index >= len(self.actions):
+            return
+        self.beginRemoveRows(QModelIndex(), row_index, row_index)
+        self.actions.pop(row_index)
+        self.endRemoveRows()
+
+    def move_row(self, source: int, offset: int) -> int:
+        target = source + offset
+        if source < 0 or source >= len(self.actions) or target < 0 or target >= len(self.actions):
+            return source
+        self.beginResetModel()
+        self.actions[source], self.actions[target] = self.actions[target], self.actions[source]
+        self.endResetModel()
+        return target
+
+    def duplicate_row(self, row_index: int) -> int:
+        if row_index < 0 or row_index >= len(self.actions):
+            return row_index
+        insert_at = row_index + 1
+        self.beginInsertRows(QModelIndex(), insert_at, insert_at)
+        self.actions.insert(insert_at, Action.from_dict(self.actions[row_index].to_dict()))
+        self.endInsertRows()
+        return insert_at
+
+    def take_row(self, row_index: int) -> Action | None:
+        if row_index < 0 or row_index >= len(self.actions):
+            return None
+        self.beginRemoveRows(QModelIndex(), row_index, row_index)
+        row = self.actions.pop(row_index)
+        self.endRemoveRows()
+        return row
+
+    def insert_existing_row(self, row_index: int, row: Action) -> None:
+        row_index = max(0, min(row_index, len(self.actions)))
+        self.beginInsertRows(QModelIndex(), row_index, row_index)
+        self.actions.insert(row_index, row)
+        self.endInsertRows()
+
+    def replace_row(self, row_index: int, action: Action) -> None:
+        if row_index < 0 or row_index >= len(self.actions):
+            return
+        self.actions[row_index] = action
+        self.dataChanged.emit(self.index(row_index, 0), self.index(row_index, self.columnCount() - 1), [Qt.DisplayRole, Qt.CheckStateRole, Qt.ForegroundRole])
+
+    def reset_actions(self, actions: list[Action]) -> None:
+        self.beginResetModel()
+        self.actions = actions
+        self.endResetModel()
+
+
+class EnabledCheckboxDelegate(QStyledItemDelegate):
+    def paint(self, painter: QPainter, option, index: QModelIndex) -> None:
+        if index.column() != 1:
+            super().paint(painter, option, index)
+            return
+        checked = index.data(Qt.CheckStateRole) == Qt.Checked
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        dark = option.palette.window().color().lightness() < 128
+        rect = option.rect.adjusted(12, 8, -12, -8)
+        rect.setWidth(16)
+        rect.setHeight(16)
+        rect.moveCenter(option.rect.center())
+        painter.setPen(QPen(QColor("#3b82f6"), 1.4))
+        painter.setBrush(QColor("#2563eb") if checked else QColor("#0f172a" if dark else "#ffffff"))
+        painter.drawRoundedRect(rect, 4, 4)
+        if checked:
+            painter.setPen(QPen(QColor("#ffffff"), 2))
+            painter.drawLine(rect.left() + 3, rect.center().y(), rect.left() + 7, rect.bottom() - 4)
+            painter.drawLine(rect.left() + 7, rect.bottom() - 4, rect.right() - 3, rect.top() + 4)
+        painter.restore()
+
+    def editorEvent(self, event, model, option, index: QModelIndex) -> bool:
+        if index.column() != 1:
+            return super().editorEvent(event, model, option, index)
+        if event.type() == event.Type.MouseButtonRelease:
+            current = index.data(Qt.CheckStateRole)
+            model.setData(index, Qt.Unchecked if current == Qt.Checked else Qt.Checked, Qt.CheckStateRole)
+            return True
+        return super().editorEvent(event, model, option, index)
+
+
+class ActionTableView(QTableView):
+    contextRequested = Signal(QPoint)
+    editRequested = Signal()
+    deleteRequested = Signal()
+
+    def __init__(self, model: ActionTableModel) -> None:
+        super().__init__()
+        self.setObjectName("ActionTableView")
+        self.setModel(model)
+        self.setSelectionBehavior(QTableView.SelectRows)
+        self.setSelectionMode(QTableView.SingleSelection)
+        self.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.setShowGrid(True)
+        self.setAlternatingRowColors(False)
+        self.verticalHeader().hide()
+        self.setMinimumHeight(252)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setWordWrap(False)
+        self.horizontalHeader().setStretchLastSection(True)
+        self.horizontalHeader().setHighlightSections(False)
+        self.horizontalHeader().setSectionsMovable(False)
+        self.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+        self.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
+        self.horizontalHeader().setSectionResizeMode(2, QHeaderView.Interactive)
+        self.horizontalHeader().setSectionResizeMode(3, QHeaderView.Interactive)
+        self.horizontalHeader().setSectionResizeMode(4, QHeaderView.Interactive)
+        self.horizontalHeader().setSectionResizeMode(5, QHeaderView.Interactive)
+        self.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
+        self.setColumnWidth(0, 34)
+        self.setColumnWidth(1, 76)
+        self.setColumnWidth(2, 148)
+        self.setColumnWidth(3, 150)
+        self.setColumnWidth(4, 120)
+        self.setColumnWidth(5, 68)
+        self.setItemDelegateForColumn(1, EnabledCheckboxDelegate(self))
+        self.doubleClicked.connect(lambda _index: self.editRequested.emit())
+        self._apply_rounded_mask()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply_rounded_mask()
+
+    def _apply_rounded_mask(self) -> None:
+        if self.width() <= 0 or self.height() <= 0:
+            return
+        path = QPainterPath()
+        path.addRoundedRect(self.rect(), 8, 8)
+        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
+
+    def contextMenuEvent(self, event) -> None:
+        self.contextRequested.emit(event.globalPos())
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() in {Qt.Key_Delete, Qt.Key_Backspace}:
+            self.deleteRequested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class RoundedTableFrame(QWidget):
+    def __init__(self, table: ActionTableView) -> None:
+        super().__init__()
+        self.setObjectName("RoundedTableFrame")
+        self.setAttribute(Qt.WA_StyledBackground, False)
+        self.setAutoFillBackground(False)
+        self.card_color = QColor("#10192c")
+        self.border_color = QColor("#233149")
+        self.inner_border_color = QColor("#233149")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(0)
+        layout.addWidget(table)
+        self.inner_border = TableBorderOverlay(self)
+
+    def set_theme(self, dark: bool) -> None:
+        self.card_color = QColor("#10192c" if dark else "#ffffff")
+        self.border_color = QColor("#233149" if dark else "#d9e2f0")
+        self.inner_border_color = QColor("#233149" if dark else "#d9e2f0")
+        self.inner_border.set_color(self.inner_border_color)
+        self.update()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.inner_border.setGeometry(self.rect().adjusted(8, 8, -8, -8))
+        self.inner_border.raise_()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        rect = self.rect().adjusted(0, 0, -1, -1)
+        path = QPainterPath()
+        path.addRoundedRect(rect, 12, 12)
+        painter.fillPath(path, self.card_color)
+        super().paintEvent(event)
+
+
+class TableBorderOverlay(QWidget):
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.border_color = QColor("#233149")
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+    def set_color(self, color: QColor) -> None:
+        self.border_color = QColor(color)
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(QPen(self.border_color, 1))
+        rect = self.rect().adjusted(0, 0, -1, -1)
+        path = QPainterPath()
+        path.addRoundedRect(rect, 8, 8)
+        painter.drawPath(path)
+        super().paintEvent(event)
+
+
+class SidebarItem(QPushButton):
+    def __init__(self, full_text: str, icon: QIcon, description: str = "") -> None:
+        super().__init__(full_text)
+        self.full_text = full_text
+        self.description = description
+        self.setIcon(icon)
+        self.setIconSize(QSize(17, 17))
+        self.setCursor(Qt.PointingHandCursor)
+        self.setMinimumHeight(38)
+        self.setCheckable(False)
+        self.setProperty("navItem", True)
+        self.set_compact(False)
+
+    def set_compact(self, compact: bool) -> None:
+        self.setText("" if compact else self.full_text)
+        self.setToolTip(self.full_text if compact else (self.description or self.full_text))
+
+
+class QueuePane(QWidget):
+    menuRequested = Signal(str, QPoint)
+    overflowRequested = Signal(str, QPoint)
+    addRequested = Signal(str)
+    moveRequested = Signal(int)
+
+    def __init__(self, group_name: str, model: ActionTableModel, show_repeat: bool = False) -> None:
+        super().__init__()
+        self.setObjectName("QueuePane")
+        self.setAttribute(Qt.WA_StyledBackground, False)
+        self.setAutoFillBackground(False)
+        self.group_name = group_name
+        self.model = model
+        self.card_color = QColor("#10192c")
+        self.border_color = QColor("#233149")
+        self.repeat_input = QLineEdit("1")
+        self.random_repeat_input = QLineEdit("0")
+        self.table = ActionTableView(model)
+        self.table_frame = RoundedTableFrame(self.table)
+        self.setMinimumHeight(360)
+        self.icon_buttons: list[tuple[QPushButton, str, int]] = []
+        self.table.contextRequested.connect(lambda point: self.menuRequested.emit(self.group_name, point))
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(12)
+
+        toolbar = QHBoxLayout()
+        title = QLabel(f"{group_name} Actions")
+        title.setObjectName("SectionTitle")
+        toolbar.addWidget(title)
+        toolbar.addStretch(1)
+
+        add_button = QPushButton("Add Action")
+        self._set_icon(add_button, "add")
+        add_button.clicked.connect(lambda: self.addRequested.emit(self.group_name))
+        toolbar.addWidget(add_button)
+
+        self.up_button = QPushButton()
+        self._set_icon(self.up_button, "up")
+        self.up_button.setToolTip("Move selected action up")
+        self.up_button.setFixedWidth(38)
+        self.up_button.clicked.connect(lambda: self.moveRequested.emit(-1))
+        toolbar.addWidget(self.up_button)
+
+        self.down_button = QPushButton()
+        self._set_icon(self.down_button, "down")
+        self.down_button.setToolTip("Move selected action down")
+        self.down_button.setFixedWidth(38)
+        self.down_button.clicked.connect(lambda: self.moveRequested.emit(1))
+        toolbar.addWidget(self.down_button)
+
+        self.more_button = QPushButton()
+        self._set_icon(self.more_button, "more")
+        self.more_button.setToolTip("More action options")
+        self.more_button.setFixedWidth(42)
+        self.more_button.clicked.connect(lambda: self.overflowRequested.emit(self.group_name, self.more_button.mapToGlobal(self.more_button.rect().bottomLeft())))
+        toolbar.addWidget(self.more_button)
+        outer.addLayout(toolbar)
+
+        if show_repeat:
+            repeat_row = QHBoxLayout()
+            repeat_row.addWidget(QLabel("Repeat entire sequence"))
+            self.repeat_input.setFixedWidth(52)
+            repeat_row.addWidget(self.repeat_input)
+            repeat_row.addWidget(QLabel(" + random"))
+            self.random_repeat_input.setFixedWidth(52)
+            repeat_row.addWidget(self.random_repeat_input)
+            repeat_row.addWidget(QLabel("time(s)"))
+            repeat_row.addStretch(1)
+            outer.addLayout(repeat_row)
+
+        outer.addWidget(self.table_frame, 1)
+        self.update_button_states(-1)
+
+    def set_theme(self, dark: bool) -> None:
+        self.card_color = QColor("#10192c" if dark else "#ffffff")
+        self.border_color = QColor("#233149" if dark else "#d9e2f0")
+        self.table_frame.set_theme(dark)
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        rect = self.rect().adjusted(0, 0, -1, -1)
+        path = QPainterPath()
+        path.addRoundedRect(rect, 16, 16)
+        painter.fillPath(path, self.card_color)
+        painter.setPen(QPen(self.border_color, 1))
+        painter.drawPath(path)
+        super().paintEvent(event)
+
+    def _set_icon(self, button: QPushButton, name: str, size: int = 22) -> None:
+        button.setIcon(app_icon(name, size=size))
+        self.icon_buttons.append((button, name, size))
+
+    def apply_icons(self, dark: bool) -> None:
+        for button, name, size in self.icon_buttons:
+            button.setIcon(app_icon(name, size=size, dark=dark))
+
+    def update_button_states(self, selected_row: int) -> None:
+        row_count = self.model.rowCount()
+        self.up_button.setEnabled(selected_row > 0)
+        self.down_button.setEnabled(0 <= selected_row < row_count - 1)
+
+
+class KeyCaptureLineEdit(QLineEdit):
+    captureFocusChanged = Signal(bool)
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self.selectAll()
+        self.captureFocusChanged.emit(True)
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.captureFocusChanged.emit(False)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        parts: list[str] = []
+        modifiers = event.modifiers()
+        if modifiers & Qt.ControlModifier:
+            parts.append("ctrl")
+        if modifiers & Qt.AltModifier:
+            parts.append("alt")
+        if modifiers & Qt.ShiftModifier:
+            parts.append("shift")
+        named_keys = {
+            Qt.Key_Space: "space",
+            Qt.Key_Return: "enter",
+            Qt.Key_Enter: "enter",
+            Qt.Key_Tab: "tab",
+            Qt.Key_Backspace: "backspace",
+            Qt.Key_Escape: "escape",
+            Qt.Key_Delete: "delete",
+        }
+        key_text = named_keys.get(event.key(), event.text().lower())
+        if not key_text:
+            key_text = QKeySequence(event.key()).toString().lower()
+        if key_text in {"control", "shift", "alt", "meta"}:
+            return
+        if key_text:
+            parts.append(key_text)
+        self.setText("+".join(dict.fromkeys(parts)))
+        event.accept()
+
+
+class AreaOverlay(QDialog):
+    def __init__(self, initial_area: ScreenArea | None = None, auto_close_on_drag: bool = False, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.result = initial_area.normalized() if initial_area and initial_area.is_valid() else None
+        self.saved = False
+        self.auto_close_on_drag = auto_close_on_drag
+        self.drag_mode = "draw"
+        self.is_dragging = False
+        self.start = QPoint()
+        self.move_origin = QPoint()
+        self.original_area: ScreenArea | None = self.result
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setCursor(Qt.CrossCursor)
+        geometry = QApplication.primaryScreen().virtualGeometry()
+        self.setGeometry(geometry)
+        self.done_button = QPushButton("Done" if auto_close_on_drag else "Save", self)
+        self.done_button.clicked.connect(self._save)
+        self.done_button.resize(96, 32)
+        self._position_done_button()
+
+    def _global_to_local(self, point: QPoint) -> QPoint:
+        return QPoint(point.x() - self.x(), point.y() - self.y())
+
+    def _local_to_area(self, rect: QRect) -> ScreenArea:
+        normalized = rect.normalized()
+        return ScreenArea(
+            self.x() + normalized.left(),
+            self.y() + normalized.top(),
+            normalized.width(),
+            normalized.height(),
+        )
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(20, 28, 44, 105))
+        if self.result and self.result.is_valid():
+            left, top, right, bottom = self.result.as_tuple()
+            rect = QRect(left - self.x(), top - self.y(), right - left, bottom - top)
+            painter.setPen(QPen(QColor("#44b8ff"), 2))
+            painter.setBrush(QColor(68, 184, 255, 65))
+            painter.drawRect(rect)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() != Qt.LeftButton:
+            return
+        global_pos = event.globalPosition().toPoint()
+        local_pos = self._global_to_local(global_pos)
+        self.is_dragging = True
+        if self.result and self._point_in_area(global_pos, self.result):
+            self.drag_mode = "move"
+            self.move_origin = global_pos
+            self.original_area = self.result.normalized()
+            return
+        self.drag_mode = "draw"
+        self.start = local_pos
+        self.result = None
+        self.update()
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if not self.is_dragging:
+            return
+        global_pos = event.globalPosition().toPoint()
+        local_pos = self._global_to_local(global_pos)
+        if self.drag_mode == "move" and self.original_area:
+            delta = global_pos - self.move_origin
+            self.result = ScreenArea(self.original_area.left + delta.x(), self.original_area.top + delta.y(), self.original_area.width, self.original_area.height)
+        else:
+            self.result = self._local_to_area(QRect(self.start, local_pos))
+        self._position_done_button()
+        self.update()
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() != Qt.LeftButton:
+            return
+        if not self.is_dragging:
+            return
+        self.is_dragging = False
+        if self.result and self.result.is_valid() and self.auto_close_on_drag:
+            self.saved = True
+            self.accept()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key_Escape:
+            self.saved = False
+            self.reject()
+            return
+        super().keyPressEvent(event)
+
+    def _position_done_button(self) -> None:
+        if not self.result or not self.result.is_valid():
+            self.done_button.move(24, 24)
+            return
+        left, top, _right, _bottom = self.result.as_tuple()
+        self.done_button.move(max(16, left - self.x() + 8), max(16, top - self.y() - 40))
+
+    def _save(self) -> None:
+        self.saved = bool(self.result and self.result.is_valid())
+        self.accept()
+
+    @staticmethod
+    def _point_in_area(point: QPoint, area: ScreenArea) -> bool:
+        left, top, right, bottom = area.as_tuple()
+        return left <= point.x() <= right and top <= point.y() <= bottom
+
+
+def choose_screen_area(owner: QWidget, initial_area: ScreenArea | None = None, auto_close_on_drag: bool = False) -> ScreenArea | None:
+    parent = owner.parentWidget()
+    overlay = AreaOverlay(initial_area, auto_close_on_drag, owner)
+    selected_area: ScreenArea | None = None
+    try:
+        if parent:
+            parent.showMinimized()
+        owner.hide()
+        overlay.setFocus()
+        overlay.activateWindow()
+        overlay.exec()
+        if overlay.saved and overlay.result and overlay.result.is_valid():
+            selected_area = overlay.result.normalized()
+    finally:
+        overlay.setWindowModality(Qt.NonModal)
+        overlay.hide()
+        overlay.setParent(None)
+        overlay.deleteLater()
+        QApplication.processEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        owner.show()
+        owner.raise_()
+        owner.activateWindow()
+        if parent:
+            parent.showNormal()
+            parent.raise_()
+            parent.activateWindow()
+    return selected_area
+
+
+__all__ = [
+    "ActionTableModel",
+    "ActionTableView",
+    "AreaOverlay",
+    "EnabledCheckboxDelegate",
+    "GeneralActionSettings",
+    "KeyCaptureLineEdit",
+    "make_help_button",
+    "make_help_label",
+    "QueuePane",
+    "SidebarItem",
+    "choose_screen_area",
+    "compact_time_label",
+    "delay_label",
+    "repeat_label",
+    "target_label",
+    "time_row",
+    "plain_number_field",
+]
