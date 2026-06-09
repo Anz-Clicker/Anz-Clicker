@@ -33,6 +33,15 @@ Version history is tracked in [CHANGELOG.md](CHANGELOG.md). The current app vers
 python anz_clicker_qt.py
 ```
 
+## Portable Build
+
+The repository's `portable/` directory contains a ready-to-run Windows build.
+Open that directory and double-click `Anz Clicker.exe`; Python does not need to
+be installed.
+
+For published versions, the same portable directory should also be compressed
+and attached to the corresponding GitHub Release.
+
 ## Notes
 
 - Mouse and keyboard input is sent with Windows APIs via `ctypes`.
