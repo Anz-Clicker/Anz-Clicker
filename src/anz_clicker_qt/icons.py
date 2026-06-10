@@ -5,8 +5,7 @@ import sys
 
 from PySide6.QtGui import QIcon
 
-
-SOURCE_ROOT = Path(__file__).resolve().parents[2]
+from .paths import SOURCE_ROOT, app_base_dir
 
 
 def resource_path(filename: str) -> Path:
@@ -18,12 +17,6 @@ def resource_path(filename: str) -> Path:
     if filename.startswith("icons/"):
         return SOURCE_ROOT / "assets" / "icons" / "themes" / filename.removeprefix("icons/")
     return SOURCE_ROOT / filename
-
-
-def app_base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return SOURCE_ROOT
 
 
 def app_icon(name: str, size: int = 22, dark: bool = True) -> QIcon:

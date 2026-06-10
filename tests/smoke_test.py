@@ -17,6 +17,7 @@ from actions import Action, ActionType, ExecutionGroup, PositionMode, ScreenArea
 from app_settings import AppSettings
 import input_controller
 from preset_store import PresetStore
+from anz_clicker_qt.paths import migrate_legacy_user_data
 from anz_clicker_qt.widgets import target_label
 
 
@@ -49,6 +50,24 @@ def test_settings_round_trip() -> None:
     assert loaded.enhanced_humanlike_mouse is True
     assert loaded.default_script_folder == "scripts"
     assert loaded.remember_window_geometry is False
+
+
+def test_legacy_user_data_migration() -> None:
+    legacy_root = TMP_ROOT / "legacy"
+    data_root = TMP_ROOT / "migrated-user-data"
+    legacy_root.mkdir(parents=True, exist_ok=True)
+    (legacy_root / "anz_clicker_settings.json").write_text('{"start_keybind": "F10"}', encoding="utf-8")
+    (legacy_root / "anz_clicker_presets.json").write_text('{"custom_actions": {}}', encoding="utf-8")
+    (legacy_root / "captures").mkdir()
+    (legacy_root / "captures" / "sample.png").write_bytes(b"capture")
+    (legacy_root / "developer.anzlicense").write_text("license", encoding="utf-8")
+
+    migrate_legacy_user_data(legacy_root, data_root)
+
+    assert (data_root / "anz_clicker_settings.json").exists()
+    assert (data_root / "anz_clicker_presets.json").exists()
+    assert (data_root / "captures" / "sample.png").exists()
+    assert (data_root / "developer.anzlicense").exists()
 
 
 def test_enhanced_mouse_path_is_interruptible_and_exact() -> None:
@@ -255,6 +274,7 @@ def main() -> int:
     reset_tmp_root()
     tests = [
         test_settings_round_trip,
+        test_legacy_user_data_migration,
         test_enhanced_mouse_path_is_interruptible_and_exact,
         test_mouse_animation_speed_scales_distance_duration,
         test_action_serialization_round_trip,

@@ -15,11 +15,6 @@ a = Analysis(
         (str(ROOT / "assets" / "icons" / "zabian_logo.png"), "."),
         (str(ROOT / "assets" / "icons" / "themes"), "icons"),
         (str(ROOT / "vendor" / "tesseract"), "tesseract"),
-        (str(ROOT / "scripts"), "scripts"),
-        (str(ROOT / "docs"), "docs"),
-        (str(ROOT / "README.md"), "."),
-        (str(ROOT / "docs" / "CHANGELOG.md"), "."),
-        (str(ROOT / "docs" / "PORTABLE_README.txt"), "."),
     ],
     hiddenimports=[
         "PIL.Image",

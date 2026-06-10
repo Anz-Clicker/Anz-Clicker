@@ -41,12 +41,19 @@ python -m pip install -r docs/requirements.txt
 
 ## Portable Build
 
-The repository's `portable/` directory contains a ready-to-run Windows build.
-Open that directory and double-click `Anz Clicker.exe`; Python does not need to
-be installed.
+Portable builds are generated from source and are not committed to Git. Build a
+release with:
 
-For published versions, the same portable directory should also be compressed
-and attached to the corresponding GitHub Release.
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/build_release.ps1
+```
+
+The versioned folder is created under `dist/`, and its distributable ZIP is
+created under `release/`. Attach that ZIP to the matching GitHub Release.
+
+User-created scripts live in `scripts/`. Settings, custom actions, captures, and
+future license files live in `user-data/`. Both directories are preserved when
+updating a portable installation.
 
 ## Repository Layout
 
@@ -54,11 +61,11 @@ and attached to the corresponding GitHub Release.
 assets/       Branding and theme icons
 config/       Example configuration and preset files
 docs/         Changelog, developer wiki, requirements, and portable notes
-packaging/    Canonical PyInstaller specification
-portable/     Ready-to-run Windows distribution
+packaging/    Canonical PyInstaller specification and release builder
 scripts/      Default user script workspace
 src/          Application source code
 tests/        Smoke and regression tests
+user-data/    Ignored local settings, presets, captures, and licenses
 vendor/       Bundled third-party runtimes such as Tesseract
 ```
 
