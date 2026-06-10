@@ -11,7 +11,9 @@ text actions.
 
 Portable data:
 - Saved scripts are stored in the "scripts" folder by default.
-- App settings and action defaults are saved next to the executable.
+- App settings, action defaults, captures, and license files are stored in the
+  "user-data" folder.
+- Keep both "scripts" and "user-data" when updating the application.
 - Keep the files and folders in this directory together when sharing the app.
 
 If Windows SmartScreen appears, choose "More info" and then "Run anyway" if you

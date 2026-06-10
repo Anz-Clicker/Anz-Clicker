@@ -20,6 +20,7 @@ from actions import ScreenArea
 
 TESSERACT_CMD: Path | None = None
 TESSDATA_DIR: Path | None = None
+CAPTURES_DIR = Path.cwd() / "captures"
 
 
 def configure_ocr(root: str | Path) -> None:
@@ -48,6 +49,11 @@ def ocr_available() -> bool:
     return pytesseract is not None or bool(TESSERACT_CMD and TESSERACT_CMD.exists())
 
 
+def configure_captures_dir(path: str | Path) -> None:
+    global CAPTURES_DIR
+    CAPTURES_DIR = Path(path)
+
+
 def capture_area(area: ScreenArea) -> Image.Image:
     if not area.is_valid():
         raise ValueError("A valid screen area is required.")
@@ -64,7 +70,7 @@ def read_text_in_area(area: ScreenArea) -> str:
 
 
 def _read_text_with_tesseract(image: Image.Image) -> str:
-    temp_dir = Path.cwd() / "captures" / "ocr_temp" / uuid.uuid4().hex
+    temp_dir = CAPTURES_DIR / "ocr_temp" / uuid.uuid4().hex
     temp_dir.mkdir(parents=True, exist_ok=True)
     try:
         image_path = temp_dir / "screen_text.png"

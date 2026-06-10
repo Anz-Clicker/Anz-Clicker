@@ -48,6 +48,13 @@ from .constants import (
 from .action_editor import ActionEditorDialog
 from .dialogs import ActionOrderDialog, SettingsDialog
 from .icons import app_base_dir, app_icon, resource_path
+from .paths import (
+    captures_dir,
+    ensure_user_directories,
+    migrate_legacy_user_data,
+    presets_path,
+    settings_path,
+)
 from .theme import build_stylesheet
 
 
@@ -71,9 +78,12 @@ class MainWindow(QMainWindow):
         if logo.exists():
             self.setWindowIcon(QIcon(str(logo)))
 
-        self.settings_path = app_base_dir() / "anz_clicker_settings.json"
+        migrate_legacy_user_data()
+        ensure_user_directories()
+        self.settings_path = settings_path()
         self.app_settings = AppSettings.load(self.settings_path)
         screen_tools.configure_ocr(app_base_dir())
+        screen_tools.configure_captures_dir(captures_dir())
         input_controller.configure_input_timing(
             mouse_animation_speed=self.app_settings.mouse_animation_speed,
             enhanced_humanlike_mouse=self.app_settings.enhanced_humanlike_mouse,
@@ -89,7 +99,7 @@ class MainWindow(QMainWindow):
             self.pause_key_input.setText(self.app_settings.pause_keybind)
         self._loading_keybinds = False
         self._apply_keybinds()
-        self.preset_store = PresetStore(app_base_dir() / "anz_clicker_presets.json")
+        self.preset_store = PresetStore(presets_path())
         self.runner = ActionRunner(lambda text: self.runnerStatus.emit(text), settings=self.app_settings)
         self.runnerStatus.connect(self._set_status)
         self.run_controls_active = False

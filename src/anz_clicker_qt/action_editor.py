@@ -39,6 +39,7 @@ from .constants import (
     SIMPLE_ACTION_KEYS,
 )
 from .icons import app_base_dir
+from .paths import captures_dir
 from .widgets import (
     GeneralActionSettings,
     KeyCaptureLineEdit,
@@ -587,9 +588,9 @@ class ActionEditorDialog(QDialog):
         if not selected_area:
             return
         image = screen_tools.capture_area(selected_area)
-        captures_dir = app_base_dir() / "captures"
-        captures_dir.mkdir(parents=True, exist_ok=True)
-        path = captures_dir / f"capture_{int(time.time() * 1000)}.png"
+        capture_folder = captures_dir()
+        capture_folder.mkdir(parents=True, exist_ok=True)
+        path = capture_folder / f"capture_{int(time.time() * 1000)}.png"
         screen_tools.save_image(image, path)
         self.picture_path.setText(str(path))
 

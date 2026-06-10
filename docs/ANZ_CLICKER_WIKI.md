@@ -26,7 +26,9 @@ This document is the source of truth for project conventions that should be reus
 - Keep saved action data in `actions.py`; do not serialize transient runtime-only state.
 - Keep app-level preferences in `AppSettings`; do not mix them into script JSON unless the setting is script-specific.
 - Keep action defaults/custom actions in `PresetStore`; do not hard-code user-editable defaults in the UI layer.
-- Keep PyInstaller resource access behind `resource_path()` and writable app files behind `app_base_dir()`.
+- Keep PyInstaller resource access behind `resource_path()`.
+- Keep user settings, presets, captures, and license files under `user-data/`; keep saved scripts under `scripts/`.
+- Use the shared helpers in `src/anz_clicker_qt/paths.py` instead of constructing persistent-data paths ad hoc.
 - Keep shared constants in `constants.py`; avoid duplicating action groups, app labels, preset prefixes, or launch modes in multiple modules.
 - Keep visual styling in `theme.py` and icons in `icons/`; avoid one-off inline colors/icons unless there is a clear reason.
 - Any popup window should open relative to the main app/editor window, not at absolute screen origin.
@@ -224,6 +226,14 @@ pyinstaller "packaging/Anz Clicker Portable.spec"
 ```
 
 Do not add new duplicate spec files. Update `packaging/Anz Clicker Portable.spec` when bundled assets change.
+
+Official portable releases should be built with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/build_release.ps1
+```
+
+Do not commit generated `portable/`, `dist/`, `release/`, or `build/` output. Attach the generated release ZIP to GitHub Releases. Future update logic must preserve `scripts/` and `user-data/`.
 
 ## Future Refactor Targets
 
