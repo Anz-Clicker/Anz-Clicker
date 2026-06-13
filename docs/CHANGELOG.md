@@ -4,6 +4,7 @@ All notable Anz Clicker changes are grouped by version. The current source versi
 
 ## Unreleased
 
+- Fixed queue drag initiation by advertising draggable/drop-enabled model rows, added a full-row drag preview, and changed action hover feedback from individual cells to the complete row.
 - Added drag-and-drop action reordering within queues and transfers through the Sequential/Background tab headers.
 - Locked script editing while execution is running while retaining Stop and Pause controls.
 - Changed zero-valued action number fields to show `0` as placeholder text for easier replacement.

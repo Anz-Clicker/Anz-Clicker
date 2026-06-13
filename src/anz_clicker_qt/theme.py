@@ -257,7 +257,7 @@ def build_stylesheet(dark: bool) -> str:
         color: {fg};
         border: none;
     }}
-    QTableView::item:hover {{
+    QTableView#ActionTableView::item:hover {{
         background: {row_hover};
     }}
     QTableView#ActionTableView QScrollBar:vertical {{

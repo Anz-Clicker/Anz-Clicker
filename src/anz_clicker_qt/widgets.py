@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QDoubleSpinBox,
     QSpinBox,
+    QStyle,
+    QStyleOptionViewItem,
     QStyledItemDelegate,
     QTabBar,
     QTableView,
@@ -282,8 +284,10 @@ class ActionTableModel(QAbstractTableModel):
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlags:
         if not index.isValid():
-            return Qt.NoItemFlags
+            return Qt.ItemIsDropEnabled if not self.editing_locked else Qt.NoItemFlags
         flags = Qt.ItemIsSelectable | Qt.ItemIsEnabled
+        if not self.editing_locked:
+            flags |= Qt.ItemIsDragEnabled | Qt.ItemIsDropEnabled
         if index.column() == 1 and not self.editing_locked:
             flags |= Qt.ItemIsUserCheckable
         return flags
@@ -398,11 +402,26 @@ class ActionTableModel(QAbstractTableModel):
         self.endResetModel()
 
 
-class EnabledCheckboxDelegate(QStyledItemDelegate):
+class RowHoverDelegate(QStyledItemDelegate):
+    def _row_option(self, option, index: QModelIndex) -> QStyleOptionViewItem:
+        row_option = QStyleOptionViewItem(option)
+        table = self.parent()
+        if isinstance(table, ActionTableView) and index.row() == table.hovered_row:
+            row_option.state |= QStyle.State_MouseOver
+        return row_option
+
+    def paint(self, painter: QPainter, option, index: QModelIndex) -> None:
+        super().paint(painter, self._row_option(option, index), index)
+
+
+class EnabledCheckboxDelegate(RowHoverDelegate):
     def paint(self, painter: QPainter, option, index: QModelIndex) -> None:
         if index.column() != 1:
             super().paint(painter, option, index)
             return
+        option = self._row_option(option, index)
+        style = option.widget.style() if option.widget else QApplication.style()
+        style.drawPrimitive(QStyle.PE_PanelItemViewItem, option, painter, option.widget)
         checked = index.data(Qt.CheckStateRole) == Qt.Checked
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing)
@@ -440,6 +459,7 @@ class ActionTableView(QTableView):
         super().__init__()
         self.group_name = group_name
         self.editing_locked = False
+        self.hovered_row = -1
         self.setObjectName("ActionTableView")
         self.setModel(model)
         self.setSelectionBehavior(QTableView.SelectRows)
@@ -450,6 +470,9 @@ class ActionTableView(QTableView):
         self.verticalHeader().hide()
         self.setMinimumHeight(252)
         self.setFocusPolicy(Qt.StrongFocus)
+        self.setToolTip("Drag an action row to reorder it, or drag it onto a Sequential/Background tab to move it.")
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
@@ -472,6 +495,7 @@ class ActionTableView(QTableView):
         self.setColumnWidth(3, 150)
         self.setColumnWidth(4, 120)
         self.setColumnWidth(5, 68)
+        self.setItemDelegate(RowHoverDelegate(self))
         self.setItemDelegateForColumn(1, EnabledCheckboxDelegate(self))
         self.doubleClicked.connect(lambda _index: self.editRequested.emit())
         self._apply_rounded_mask()
@@ -491,6 +515,21 @@ class ActionTableView(QTableView):
         if self.editing_locked:
             return
         self.contextRequested.emit(event.globalPos())
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        row = self.indexAt(event.position().toPoint()).row()
+        if row != self.hovered_row:
+            self.hovered_row = row
+            self.viewport().update()
+        self.viewport().setCursor(Qt.OpenHandCursor if row >= 0 and not self.editing_locked else Qt.ArrowCursor)
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        if self.hovered_row != -1:
+            self.hovered_row = -1
+            self.viewport().update()
+        self.viewport().unsetCursor()
+        super().leaveEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if not self.editing_locked and event.key() in {Qt.Key_Delete, Qt.Key_Backspace}:
@@ -512,7 +551,14 @@ class ActionTableView(QTableView):
             return
         drag = QDrag(self)
         drag.setMimeData(encode_action_drag(self.group_name, row))
+        row_rect = self.visualRect(self.model().index(row, 0))
+        row_rect.setRight(self.viewport().width())
+        pixmap = self.viewport().grab(row_rect)
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(QPoint(min(24, pixmap.width() // 2), pixmap.height() // 2))
+        self.viewport().setCursor(Qt.ClosedHandCursor)
         drag.exec(Qt.MoveAction)
+        self.viewport().unsetCursor()
 
     def dragEnterEvent(self, event) -> None:
         if not self.editing_locked and decode_action_drag(event.mimeData()):
@@ -549,7 +595,9 @@ class ActionTabBar(QTabBar):
     def __init__(self) -> None:
         super().__init__()
         self.editing_locked = False
+        self.drop_target_index = -1
         self.setAcceptDrops(True)
+        self.setToolTip("Drop an action onto a tab to move it to that action queue.")
 
     def set_editing_locked(self, locked: bool) -> None:
         self.editing_locked = locked
@@ -562,21 +610,50 @@ class ActionTabBar(QTabBar):
         event.ignore()
 
     def dragMoveEvent(self, event) -> None:
-        if not self.editing_locked and self.tabAt(event.position().toPoint()) >= 0 and decode_action_drag(event.mimeData()):
+        tab_index = self.tabAt(event.position().toPoint())
+        if not self.editing_locked and tab_index >= 0 and decode_action_drag(event.mimeData()):
+            if tab_index != self.drop_target_index:
+                self.drop_target_index = tab_index
+                self.update()
             event.acceptProposedAction()
             return
+        self._clear_drop_target()
         event.ignore()
+
+    def dragLeaveEvent(self, event) -> None:
+        self._clear_drop_target()
+        super().dragLeaveEvent(event)
 
     def dropEvent(self, event) -> None:
         payload = decode_action_drag(event.mimeData())
         tab_index = self.tabAt(event.position().toPoint())
         if self.editing_locked or payload is None or tab_index < 0:
+            self._clear_drop_target()
             event.ignore()
             return
         source_group, source_row = payload
         target_group = "Sequential" if tab_index == 0 else "Background"
+        self._clear_drop_target()
         self.actionDropped.emit(source_group, source_row, target_group)
         event.acceptProposedAction()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self.drop_target_index < 0:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        color = self.palette().highlight().color()
+        fill = QColor(color)
+        fill.setAlpha(42)
+        painter.setBrush(fill)
+        painter.setPen(QPen(color, 2))
+        painter.drawRoundedRect(self.tabRect(self.drop_target_index).adjusted(2, 2, -2, -2), 8, 8)
+
+    def _clear_drop_target(self) -> None:
+        if self.drop_target_index != -1:
+            self.drop_target_index = -1
+            self.update()
 
 
 class RoundedTableFrame(QWidget):

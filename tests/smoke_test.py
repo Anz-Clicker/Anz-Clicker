@@ -8,6 +8,8 @@ from pathlib import Path
 import shutil
 import sys
 
+from PySide6.QtCore import QModelIndex, Qt
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -19,7 +21,7 @@ from app_settings import AppSettings
 import input_controller
 from preset_store import PresetStore
 from anz_clicker_qt.paths import migrate_legacy_user_data, storage_root
-from anz_clicker_qt.widgets import ActionTableModel, target_label
+from anz_clicker_qt.widgets import ActionTableModel, decode_action_drag, encode_action_drag, target_label
 
 
 TMP_ROOT = ROOT / "tmp_qt_doc_test" / "smoke_test"
@@ -225,6 +227,17 @@ def test_action_model_drag_reorder() -> None:
     assert [action.comment for action in model.actions] == ["first", "second", "third"]
 
 
+def test_action_rows_advertise_drag_and_drop() -> None:
+    model = ActionTableModel([Action(action_type=ActionType.WAIT.value)])
+    flags = model.flags(model.index(0, 0))
+    assert flags & Qt.ItemIsDragEnabled
+    assert flags & Qt.ItemIsDropEnabled
+    assert model.flags(QModelIndex()) & Qt.ItemIsDropEnabled
+    assert decode_action_drag(encode_action_drag("Sequential", 0)) == ("Sequential", 0)
+    model.set_editing_locked(True)
+    assert not (model.flags(model.index(0, 0)) & Qt.ItemIsDragEnabled)
+
+
 def test_background_action_flag_does_not_duplicate_planning() -> None:
     import runner
 
@@ -338,6 +351,7 @@ def main() -> int:
         test_keyboard_action_target_labels_show_keys,
         test_script_payload_round_trip,
         test_action_model_drag_reorder,
+        test_action_rows_advertise_drag_and_drop,
         test_background_action_flag_does_not_duplicate_planning,
         test_nested_script_runtime_planning,
         test_stop_anz_clicker_action_sets_global_stop,
