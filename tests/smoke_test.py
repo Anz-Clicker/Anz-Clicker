@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import random
 from pathlib import Path
 import shutil
@@ -17,7 +18,7 @@ from actions import Action, ActionType, ExecutionGroup, PositionMode, ScreenArea
 from app_settings import AppSettings
 import input_controller
 from preset_store import PresetStore
-from anz_clicker_qt.paths import migrate_legacy_user_data
+from anz_clicker_qt.paths import migrate_legacy_user_data, storage_root
 from anz_clicker_qt.widgets import target_label
 
 
@@ -55,19 +56,46 @@ def test_settings_round_trip() -> None:
 def test_legacy_user_data_migration() -> None:
     legacy_root = TMP_ROOT / "legacy"
     data_root = TMP_ROOT / "migrated-user-data"
+    scripts_root = TMP_ROOT / "migrated-scripts"
     legacy_root.mkdir(parents=True, exist_ok=True)
     (legacy_root / "anz_clicker_settings.json").write_text('{"start_keybind": "F10"}', encoding="utf-8")
     (legacy_root / "anz_clicker_presets.json").write_text('{"custom_actions": {}}', encoding="utf-8")
     (legacy_root / "captures").mkdir()
     (legacy_root / "captures" / "sample.png").write_bytes(b"capture")
+    (legacy_root / "scripts").mkdir()
+    (legacy_root / "scripts" / "sample.json").write_text('{"sequential_actions": []}', encoding="utf-8")
     (legacy_root / "developer.anzlicense").write_text("license", encoding="utf-8")
 
-    migrate_legacy_user_data(legacy_root, data_root)
+    migrate_legacy_user_data(legacy_root, data_root, scripts_root)
 
     assert (data_root / "anz_clicker_settings.json").exists()
     assert (data_root / "anz_clicker_presets.json").exists()
     assert (data_root / "captures" / "sample.png").exists()
     assert (data_root / "developer.anzlicense").exists()
+    assert (scripts_root / "sample.json").exists()
+
+    (data_root / "anz_clicker_settings.json").write_text('{"start_keybind": "F9"}', encoding="utf-8")
+    migrate_legacy_user_data(legacy_root, data_root, scripts_root)
+    assert '"F9"' in (data_root / "anz_clicker_settings.json").read_text(encoding="utf-8")
+
+
+def test_frozen_storage_root_uses_user_profile_override() -> None:
+    expected = TMP_ROOT / "installed-user-data"
+    previous_frozen = getattr(sys, "frozen", None)
+    previous_override = os.environ.get("ANZ_CLICKER_DATA_DIR")
+    try:
+        sys.frozen = True
+        os.environ["ANZ_CLICKER_DATA_DIR"] = str(expected)
+        assert storage_root() == expected.resolve()
+    finally:
+        if previous_frozen is None:
+            delattr(sys, "frozen")
+        else:
+            sys.frozen = previous_frozen
+        if previous_override is None:
+            os.environ.pop("ANZ_CLICKER_DATA_DIR", None)
+        else:
+            os.environ["ANZ_CLICKER_DATA_DIR"] = previous_override
 
 
 def test_enhanced_mouse_path_is_interruptible_and_exact() -> None:
@@ -275,6 +303,7 @@ def main() -> int:
     tests = [
         test_settings_round_trip,
         test_legacy_user_data_migration,
+        test_frozen_storage_root_uses_user_profile_override,
         test_enhanced_mouse_path_is_interruptible_and_exact,
         test_mouse_animation_speed_scales_distance_duration,
         test_action_serialization_round_trip,

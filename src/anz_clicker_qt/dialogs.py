@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from app_settings import AppSettings
 from .constants import APP_VERSION
-from .icons import app_base_dir
+from .paths import scripts_dir, storage_root
 from .widgets import make_help_label
 
 
@@ -253,10 +253,10 @@ class SettingsDialog(QDialog):
         return row
 
     def _browse_script_folder(self) -> None:
-        start_dir = self.script_folder.text().strip() or str(app_base_dir() / "scripts")
+        start_dir = self.script_folder.text().strip() or str(scripts_dir())
         start_path = Path(start_dir)
         if not start_path.is_absolute():
-            start_dir = str(app_base_dir() / start_path)
+            start_dir = str(storage_root() / start_path)
         selected = QFileDialog.getExistingDirectory(self, "Choose Default Script Folder", start_dir)
         if selected:
             self.script_folder.setText(selected)

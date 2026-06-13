@@ -1,5 +1,6 @@
 param(
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [switch]$SkipInstaller
 )
 
 $ErrorActionPreference = "Stop"
@@ -7,10 +8,10 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $BuildRoot = Join-Path $RepoRoot "build"
 $DistRoot = Join-Path $RepoRoot "dist"
-$ReleaseRoot = Join-Path $RepoRoot "release"
 $PyInstallerWork = Join-Path $BuildRoot "pyinstaller-work"
 $PyInstallerDist = Join-Path $BuildRoot "pyinstaller-dist"
-$SpecPath = Join-Path $PSScriptRoot "Anz Clicker Portable.spec"
+$SpecPath = Join-Path $PSScriptRoot "Anz Clicker.spec"
+$InstallerScript = Join-Path $PSScriptRoot "Anz Clicker.iss"
 
 Push-Location $RepoRoot
 try {
@@ -37,49 +38,44 @@ try {
         throw "PyInstaller failed."
     }
 
-    $BuiltApp = Join-Path $PyInstallerDist "Anz Clicker Portable"
-    $ReleaseName = "Anz Clicker v$Version"
-    $ReleaseDir = Join-Path $DistRoot $ReleaseName
-    $ZipPath = Join-Path $ReleaseRoot "Anz Clicker Portable v$Version.zip"
+    $BuiltApp = Join-Path $PyInstallerDist "Anz Clicker"
+    $StagedApp = Join-Path $DistRoot "Anz Clicker"
 
-    if (Test-Path -LiteralPath $ReleaseDir) {
-        Remove-Item -LiteralPath $ReleaseDir -Recurse -Force
+    if (Test-Path -LiteralPath $StagedApp) {
+        Remove-Item -LiteralPath $StagedApp -Recurse -Force
     }
-    if (Test-Path -LiteralPath $ZipPath) {
-        Remove-Item -LiteralPath $ZipPath -Force
+    New-Item -ItemType Directory -Path $DistRoot -Force | Out-Null
+    Copy-Item -LiteralPath $BuiltApp -Destination $StagedApp -Recurse
+    Write-Output "Staged application: $StagedApp"
+
+    if ($SkipInstaller) {
+        Write-Output "Installer compilation skipped."
+        return
     }
 
-    New-Item -ItemType Directory -Path $ReleaseDir -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $ReleaseDir "scripts") -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $ReleaseDir "user-data") -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $ReleaseDir "docs") -Force | Out-Null
-    New-Item -ItemType Directory -Path $ReleaseRoot -Force | Out-Null
-
-    Copy-Item -LiteralPath (Join-Path $BuiltApp "Anz Clicker.exe") -Destination $ReleaseDir
-    Copy-Item -LiteralPath (Join-Path $BuiltApp "_internal") -Destination (Join-Path $ReleaseDir "_internal") -Recurse
-    Copy-Item -LiteralPath (Join-Path $RepoRoot "scripts\README.md") -Destination (Join-Path $ReleaseDir "scripts\README.md")
-    Copy-Item -LiteralPath (Join-Path $RepoRoot "config\USER_DATA_README.md") -Destination (Join-Path $ReleaseDir "user-data\README.md")
-    Copy-Item -LiteralPath (Join-Path $RepoRoot "docs\CHANGELOG.md") -Destination (Join-Path $ReleaseDir "docs\CHANGELOG.md")
-    Copy-Item -LiteralPath (Join-Path $RepoRoot "docs\PORTABLE_README.txt") -Destination (Join-Path $ReleaseDir "README.txt")
-
-    $Manifest = [ordered]@{
-        product = "Anz Clicker"
-        version = $Version
-        generated_at = (Get-Date).ToUniversalTime().ToString("o")
-        executable = "Anz Clicker.exe"
-        preserve_on_update = @("scripts", "user-data")
+    $CompilerCandidates = @(
+        (Get-Command "ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1),
+        (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
+        (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe")
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+    $Compiler = $CompilerCandidates | Select-Object -First 1
+    if (-not $Compiler) {
+        throw "Inno Setup 6 was not found. Install it from https://jrsoftware.org/isdl.php, then rerun this command. The tested application remains staged at '$StagedApp'."
     }
-    $Manifest | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $ReleaseDir "release-manifest.json") -Encoding UTF8
 
-    Compress-Archive -LiteralPath $ReleaseDir -DestinationPath $ZipPath -CompressionLevel Optimal
-    $Hash = Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256
-    $Zip = Get-Item -LiteralPath $ZipPath
+    & $Compiler "/DAppVersion=$Version" "/DSourceDir=$StagedApp" "/DRepoRoot=$RepoRoot" $InstallerScript
+    if ($LASTEXITCODE -ne 0) {
+        throw "Inno Setup failed."
+    }
 
+    $SetupPath = Join-Path $RepoRoot "release\Anz Clicker Setup v$Version.exe"
+    $Hash = Get-FileHash -LiteralPath $SetupPath -Algorithm SHA256
+    $Setup = Get-Item -LiteralPath $SetupPath
     Write-Output ""
-    Write-Output "Release folder: $ReleaseDir"
-    Write-Output "Release ZIP:    $ZipPath"
-    Write-Output "ZIP size:       $([math]::Round($Zip.Length / 1MB, 2)) MB"
-    Write-Output "SHA-256:        $($Hash.Hash)"
+    Write-Output "Installer: $SetupPath"
+    Write-Output "Size:      $([math]::Round($Setup.Length / 1MB, 2)) MB"
+    Write-Output "SHA-256:   $($Hash.Hash)"
 }
 finally {
     Pop-Location

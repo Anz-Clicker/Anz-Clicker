@@ -4,11 +4,12 @@ All notable Anz Clicker changes are grouped by version. The current source versi
 
 ## Unreleased
 
-- Removed compiled portable output from source control to keep the repository as the single source of truth.
-- Added `packaging/build_release.ps1` to test, build, assemble, hash, and ZIP versioned portable releases.
-- Added a release manifest that identifies `scripts/` and `user-data/` as persistent update-safe directories.
-- Moved settings, custom action presets, captures, and future license files into `user-data/`.
-- Added automatic migration for legacy root-level settings, presets, captures, and `.anzlicense` files.
+- Replaced portable ZIP releases with a Windows installer built through Inno Setup 6.
+- Moved installed-build scripts to `%LOCALAPPDATA%\Anz Clicker\scripts`.
+- Moved installed-build settings, custom actions, captures, and future license files to `%LOCALAPPDATA%\Anz Clicker\user-data`.
+- Added non-destructive migration for legacy portable scripts, settings, presets, captures, and `.anzlicense` files.
+- Kept source-code development data repo-local for straightforward testing.
+- Added a staged application-only build mode for validating PyInstaller output before compiling an installer.
 
 ## 1.2.0 - 2026-06-08
 

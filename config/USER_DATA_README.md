@@ -1,5 +1,14 @@
 # User Data
 
-Anz Clicker stores application settings, custom action presets, captures, and future license files in this directory.
+Installed copies of Anz Clicker store application settings, custom action
+presets, captures, and future license files in:
 
-Keep this directory when updating or replacing the application.
+`%LOCALAPPDATA%\Anz Clicker\user-data`
+
+Saved scripts default to:
+
+`%LOCALAPPDATA%\Anz Clicker\scripts`
+
+Application upgrades and uninstall/reinstall operations leave these folders
+untouched. Source-code development runs continue to use the repository's local
+`user-data/` and `scripts/` folders.

@@ -53,6 +53,7 @@ from .paths import (
     ensure_user_directories,
     migrate_legacy_user_data,
     presets_path,
+    storage_root,
     settings_path,
 )
 from .theme import build_stylesheet
@@ -1022,7 +1023,7 @@ class MainWindow(QMainWindow):
         raw_folder = (self.app_settings.default_script_folder or "scripts").strip()
         folder = Path(raw_folder)
         if not folder.is_absolute():
-            folder = app_base_dir() / folder
+            folder = storage_root() / folder
         return folder
 
     def load_sample_actions(self) -> None:
