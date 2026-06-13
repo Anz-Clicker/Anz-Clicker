@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import Signal
 from PySide6.QtGui import QColor, QMouseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -138,6 +139,8 @@ class ActionOrderDialog(QDialog):
 
 
 class SettingsDialog(QDialog):
+    checkUpdatesRequested = Signal()
+
     def __init__(self, settings: AppSettings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
@@ -148,9 +151,15 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(22, 22, 22, 18)
         layout.setSpacing(16)
 
+        title_row = QHBoxLayout()
         title = QLabel("Settings")
         title.setObjectName("SectionTitle")
-        layout.addWidget(title)
+        title_row.addWidget(title)
+        title_row.addStretch(1)
+        version_label = QLabel(f"Version {APP_VERSION}")
+        version_label.setObjectName("VersionLabel")
+        title_row.addWidget(version_label)
+        layout.addLayout(title_row)
 
         form = QFormLayout()
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
@@ -207,9 +216,9 @@ class SettingsDialog(QDialog):
         disclaimer_button = QPushButton("Disclaimer")
         disclaimer_button.clicked.connect(self._show_disclaimer)
         bottom_row.addWidget(disclaimer_button)
-        version_label = QLabel(f"Version {APP_VERSION}")
-        version_label.setObjectName("VersionLabel")
-        bottom_row.addWidget(version_label)
+        self.check_updates_button = QPushButton("Check for Updates")
+        self.check_updates_button.clicked.connect(self.checkUpdatesRequested.emit)
+        bottom_row.addWidget(self.check_updates_button)
         bottom_row.addStretch(1)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._save)
@@ -217,6 +226,13 @@ class SettingsDialog(QDialog):
         bottom_row.addWidget(buttons)
         layout.addLayout(bottom_row)
         self.resize(620, 350)
+
+    def set_update_checking(self, checking: bool) -> None:
+        self.check_updates_button.setEnabled(not checking)
+        self.check_updates_button.setText("Checking..." if checking else "Check for Updates")
+
+    def save_for_update(self) -> None:
+        self._save()
 
     def _show_disclaimer(self) -> None:
         QMessageBox.warning(

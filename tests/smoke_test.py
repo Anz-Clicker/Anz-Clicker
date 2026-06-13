@@ -21,6 +21,13 @@ from app_settings import AppSettings
 import input_controller
 from preset_store import PresetStore
 from anz_clicker_qt.paths import migrate_legacy_user_data, storage_root
+from anz_clicker_qt.updater import (
+    UpdateError,
+    installer_command,
+    is_newer_version,
+    parse_version,
+    release_from_payload,
+)
 from anz_clicker_qt.widgets import ActionTableModel, decode_action_drag, encode_action_drag, target_label
 
 
@@ -53,6 +60,55 @@ def test_settings_round_trip() -> None:
     assert loaded.enhanced_humanlike_mouse is True
     assert loaded.default_script_folder == "scripts"
     assert loaded.remember_window_geometry is False
+
+
+def test_update_release_parsing_and_version_comparison() -> None:
+    payload = {
+        "tag_name": "v1.4.0",
+        "html_url": "https://github.com/Anz-Clicker/Anz-Clicker/releases/tag/v1.4.0",
+        "assets": [
+            {
+                "name": "source-notes.txt",
+                "browser_download_url": "https://github.com/Anz-Clicker/Anz-Clicker/releases/download/v1.4.0/source-notes.txt",
+            },
+            {
+                "name": "Anz Clicker Setup v1.4.0.exe",
+                "browser_download_url": "https://github.com/Anz-Clicker/Anz-Clicker/releases/download/v1.4.0/Anz.Clicker.Setup.exe",
+                "digest": "sha256:abc123",
+                "size": 123456,
+            },
+        ],
+    }
+    release = release_from_payload(payload)
+    assert release.version == "1.4.0"
+    assert release.installer_name == "Anz Clicker Setup v1.4.0.exe"
+    assert release.size == 123456
+    assert parse_version("v1.3.0") == (1, 3, 0)
+    assert is_newer_version(release.version, "1.3.0")
+    assert not is_newer_version("1.3.0", "1.3.0")
+
+    command = installer_command(Path("Anz Clicker Setup.exe"))
+    assert "/SILENT" in command
+    assert "/CLOSEAPPLICATIONS" in command
+    assert "/RESTARTAPPLICATIONS" in command
+    assert "/NORESTART" in command
+
+    try:
+        release_from_payload(
+            {
+                "tag_name": "v1.4.0",
+                "assets": [
+                    {
+                        "name": "unrelated-tool.exe",
+                        "browser_download_url": "https://github.com/Anz-Clicker/Anz-Clicker/releases/download/v1.4.0/unrelated-tool.exe",
+                    }
+                ],
+            }
+        )
+    except UpdateError as exc:
+        assert "does not include an Anz Clicker installer" in str(exc)
+    else:
+        raise AssertionError("An unrelated executable was accepted as the updater installer")
 
 
 def test_legacy_user_data_migration() -> None:
@@ -343,6 +399,7 @@ def main() -> int:
     reset_tmp_root()
     tests = [
         test_settings_round_trip,
+        test_update_release_parsing_and_version_comparison,
         test_legacy_user_data_migration,
         test_frozen_storage_root_uses_user_profile_override,
         test_enhanced_mouse_path_is_interruptible_and_exact,

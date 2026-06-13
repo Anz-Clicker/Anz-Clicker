@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import random
 import sys
+import threading
 import time
 
 from PySide6.QtCore import QByteArray, QCoreApplication, QEvent, QModelIndex, QPoint, Qt, Signal, QTimer
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QInputDialog,
     QProgressBar,
+    QProgressDialog,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -57,6 +59,15 @@ from .paths import (
     settings_path,
 )
 from .theme import build_stylesheet
+from .updater import (
+    ReleaseInfo,
+    UpdateCancelled,
+    UpdateError,
+    download_installer,
+    fetch_latest_release,
+    is_newer_version,
+    launch_installer,
+)
 
 
 from .widgets import (
@@ -69,6 +80,9 @@ from .widgets import (
 )
 class MainWindow(QMainWindow):
     runnerStatus = Signal(str)
+    updateCheckFinished = Signal(object, str)
+    updateDownloadProgress = Signal(int, int)
+    updateDownloadFinished = Signal(object, str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -115,6 +129,14 @@ class MainWindow(QMainWindow):
         self.run_progress_completed = False
         self.run_timer = QTimer(self)
         self.run_timer.timeout.connect(self._update_run_time)
+        self.updateCheckFinished.connect(self._finish_update_check)
+        self.updateDownloadProgress.connect(self._update_download_progress)
+        self.updateDownloadFinished.connect(self._finish_update_download)
+        self._update_check_in_progress = False
+        self._update_dialog: SettingsDialog | None = None
+        self._pending_update_release: ReleaseInfo | None = None
+        self._update_progress_dialog: QProgressDialog | None = None
+        self._update_cancel_event: threading.Event | None = None
         self._open_overflow_group: str | None = None
         self._open_overflow_menu: QMenu | None = None
         self._open_editors: list[ActionEditorDialog] = []
@@ -1259,7 +1281,14 @@ class MainWindow(QMainWindow):
 
     def open_settings(self) -> None:
         dialog = SettingsDialog(self.app_settings, self)
-        if dialog.exec() != QDialog.Accepted:
+        self._update_dialog = dialog
+        self._pending_update_release = None
+        dialog.set_update_checking(self._update_check_in_progress)
+        dialog.checkUpdatesRequested.connect(lambda: self._start_update_check(dialog))
+        accepted = dialog.exec() == QDialog.Accepted
+        self._update_dialog = None
+        if not accepted:
+            self._pending_update_release = None
             return
         existing_geometry = self.app_settings.window_geometry
         self.app_settings = dialog.result
@@ -1272,6 +1301,7 @@ class MainWindow(QMainWindow):
             self.app_settings.save(self.settings_path)
         except OSError as exc:
             QMessageBox.warning(self, "Settings Not Saved", f"Could not save settings:\n{exc}")
+            self._pending_update_release = None
             return
         self.runner.settings = self.app_settings
         input_controller.configure_input_timing(
@@ -1282,6 +1312,147 @@ class MainWindow(QMainWindow):
             key_press_delay_min_ms=self.app_settings.key_press_delay_min_ms,
             key_press_delay_max_ms=self.app_settings.key_press_delay_max_ms,
         )
+        pending_release = self._pending_update_release
+        self._pending_update_release = None
+        if pending_release is not None:
+            QTimer.singleShot(0, lambda release=pending_release: self._begin_update_install(release))
+
+    def _start_update_check(self, dialog: SettingsDialog) -> None:
+        if self._update_check_in_progress:
+            return
+        self._update_check_in_progress = True
+        dialog.set_update_checking(True)
+
+        def check() -> None:
+            try:
+                release = fetch_latest_release()
+            except UpdateError as exc:
+                self.updateCheckFinished.emit(None, str(exc))
+            except Exception as exc:
+                self.updateCheckFinished.emit(None, f"Could not check for updates: {exc}")
+            else:
+                self.updateCheckFinished.emit(release, "")
+
+        threading.Thread(target=check, name="AnzClickerUpdateCheck", daemon=True).start()
+
+    def _finish_update_check(self, release: object, error: str) -> None:
+        self._update_check_in_progress = False
+        dialog = self._update_dialog
+        if dialog is None or not dialog.isVisible():
+            return
+        dialog.set_update_checking(False)
+        if error:
+            QMessageBox.warning(dialog, "Update Check Failed", error)
+            return
+        if not isinstance(release, ReleaseInfo):
+            QMessageBox.warning(dialog, "Update Check Failed", "GitHub returned an invalid release.")
+            return
+        try:
+            update_available = is_newer_version(release.version, APP_VERSION)
+        except UpdateError as exc:
+            QMessageBox.warning(dialog, "Update Check Failed", str(exc))
+            return
+        if not update_available:
+            QMessageBox.information(
+                dialog,
+                "No Updates Available",
+                f"Anz Clicker {APP_VERSION} is the latest available version.",
+            )
+            return
+        choice = QMessageBox.question(
+            dialog,
+            "Update Available",
+            f"New version {release.version} is available. Would you like to install it?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if choice != QMessageBox.Yes:
+            return
+        self._pending_update_release = release
+        dialog.save_for_update()
+
+    def _begin_update_install(self, release: ReleaseInfo) -> None:
+        if not self._confirm_continue_with_unsaved_changes():
+            return
+        if self.is_dirty:
+            # The user explicitly chose Discard. Avoid a second prompt when
+            # Inno Setup closes the application to replace its files.
+            self._set_clean()
+        if self.runner.is_running:
+            choice = QMessageBox.question(
+                self,
+                "Stop Running Script",
+                "Installing the update will stop the currently running script. Continue?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if choice != QMessageBox.Yes:
+                return
+            self.runner.stop()
+
+        self._update_cancel_event = threading.Event()
+        progress = QProgressDialog(
+            f"Downloading Anz Clicker {release.version}...",
+            "Cancel",
+            0,
+            max(0, release.size),
+            self,
+        )
+        progress.setWindowTitle("Downloading Update")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        if release.size <= 0:
+            progress.setRange(0, 0)
+        progress.canceled.connect(self._update_cancel_event.set)
+        self._update_progress_dialog = progress
+        progress.show()
+
+        def download() -> None:
+            try:
+                installer = download_installer(
+                    release,
+                    progress=lambda current, total: self.updateDownloadProgress.emit(current, total),
+                    should_cancel=self._update_cancel_event.is_set,
+                )
+            except UpdateCancelled:
+                self.updateDownloadFinished.emit(None, "")
+            except UpdateError as exc:
+                self.updateDownloadFinished.emit(None, str(exc))
+            except Exception as exc:
+                self.updateDownloadFinished.emit(None, f"Could not download the update: {exc}")
+            else:
+                self.updateDownloadFinished.emit(installer, "")
+
+        threading.Thread(target=download, name="AnzClickerUpdateDownload", daemon=True).start()
+
+    def _update_download_progress(self, current: int, total: int) -> None:
+        progress = self._update_progress_dialog
+        if progress is None:
+            return
+        if total > 0:
+            progress.setRange(0, total)
+            progress.setValue(min(current, total))
+
+    def _finish_update_download(self, installer: object, error: str) -> None:
+        progress = self._update_progress_dialog
+        self._update_progress_dialog = None
+        self._update_cancel_event = None
+        if progress is not None:
+            progress.close()
+            progress.deleteLater()
+        if error:
+            QMessageBox.warning(self, "Update Download Failed", error)
+            return
+        if installer is None:
+            return
+        try:
+            self._save_window_geometry_setting()
+            launch_installer(Path(installer))
+        except UpdateError as exc:
+            QMessageBox.warning(self, "Update Could Not Start", str(exc))
+            return
+        if hasattr(self, "status_text"):
+            self.status_text.setText("Installing update...")
 
     def _save_app_settings_silent(self) -> bool:
         try:

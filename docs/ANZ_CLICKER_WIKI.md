@@ -163,6 +163,11 @@ Animated movement duration is controlled globally by Settings, not by an action-
 - Update `docs/CHANGELOG.md` whenever changing `APP_VERSION`.
 - Use semantic versioning loosely: patch for bug fixes, minor for user-facing features, and major only for breaking workflow or storage changes.
 - Packaging scripts read `APP_VERSION` so installer names stay consistent.
+- The in-app update checker reads the latest full release from the public GitHub Releases API.
+- Every published release intended for automatic updates must use a semantic tag such as `v1.4.0` and include an installer asset named `Anz Clicker Setup v1.4.0.exe`.
+- Update downloads use HTTPS and verify GitHub's SHA-256 asset digest when one is available.
+- The updater must run the standard unsaved-script guard before downloading an installer.
+- The updater launches Inno Setup with `/SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NORESTART` so the installed app is replaced and reopened while `%LOCALAPPDATA%` user data remains untouched.
 
 ## Icons And Theme
 
