@@ -162,7 +162,7 @@ Animated movement duration is controlled globally by Settings, not by an action-
 - UI code should import `APP_VERSION` from `anz_clicker_qt.constants`, which re-exports the version for existing callers.
 - Update `docs/CHANGELOG.md` whenever changing `APP_VERSION`.
 - Use semantic versioning loosely: patch for bug fixes, minor for user-facing features, and major only for breaking workflow or storage changes.
-- Packaging scripts should eventually read `APP_VERSION` so release folder and ZIP names stay consistent.
+- Packaging scripts read `APP_VERSION` so installer names stay consistent.
 
 ## Icons And Theme
 
@@ -238,6 +238,14 @@ generated setup EXE to GitHub Releases. Installed program files belong under
 `Program Files`; scripts and user-owned configuration belong under
 `%LOCALAPPDATA%\Anz Clicker` and must never be deleted by normal upgrades or
 uninstall operations.
+
+### Production Release Checklist
+
+- Run the complete smoke suite and launch-test the frozen executable.
+- Build and hash the Windows installer.
+- Obtain and configure a trusted Windows code-signing certificate before public production distribution.
+- Sign both the application executable and installer, then verify their signatures.
+- Confirm upgrades preserve `%LOCALAPPDATA%\Anz Clicker\scripts` and `user-data`.
 
 ## Future Refactor Targets
 

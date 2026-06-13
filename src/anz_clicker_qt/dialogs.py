@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 from app_settings import AppSettings
 from .constants import APP_VERSION
 from .paths import scripts_dir, storage_root
-from .widgets import make_help_label
+from .widgets import PlaceholderSpinBox, make_help_label
 
 
 class ActionOrderDialog(QDialog):
@@ -204,6 +204,9 @@ class SettingsDialog(QDialog):
         reset_button = QPushButton("Reset to Defaults")
         reset_button.clicked.connect(self._reset_to_defaults)
         bottom_row.addWidget(reset_button)
+        disclaimer_button = QPushButton("Disclaimer")
+        disclaimer_button.clicked.connect(self._show_disclaimer)
+        bottom_row.addWidget(disclaimer_button)
         version_label = QLabel(f"Version {APP_VERSION}")
         version_label.setObjectName("VersionLabel")
         bottom_row.addWidget(version_label)
@@ -215,12 +218,27 @@ class SettingsDialog(QDialog):
         layout.addLayout(bottom_row)
         self.resize(620, 350)
 
+    def _show_disclaimer(self) -> None:
+        QMessageBox.warning(
+            self,
+            "Anz Clicker Disclaimer",
+            "Anz Clicker should not be assumed to be undetectable by anti-cheat or automation-detection "
+            "systems used by games or other software.\n\n"
+            "Using automation may violate the rules or terms of a game, service, or application and may "
+            "result in warnings, suspensions, bans, or other action against an account. The creator is not "
+            "responsible for consequences resulting from use of this tool.\n\n"
+            "Anz Clicker is provided strictly as a use-at-your-own-risk tool. Review the applicable rules "
+            "before using it.",
+        )
+
     def _spin(self, minimum: int, maximum: int, value: int) -> QSpinBox:
-        field = QSpinBox()
+        field = PlaceholderSpinBox()
         field.setButtonSymbols(QSpinBox.NoButtons)
         field.setRange(minimum, maximum)
         field.setValue(value)
         field.setMinimumWidth(96)
+        if minimum <= 0 <= maximum:
+            field.lineEdit().setPlaceholderText("0")
         return field
 
     def _range_row(self, before: str, middle: str, after: str, low: int, high: int, prefix: str) -> QWidget:

@@ -30,6 +30,7 @@ import input_controller
 from preset_store import PresetStore
 import screen_tools
 from .constants import (
+    BACKGROUND_GROUP,
     CAPTURE_KEY_ACTIONS,
     LAUNCH_MODES,
     PICTURE_ACTIONS,
@@ -43,6 +44,8 @@ from .paths import captures_dir
 from .widgets import (
     GeneralActionSettings,
     KeyCaptureLineEdit,
+    PlaceholderDoubleSpinBox,
+    PlaceholderSpinBox,
     choose_screen_area,
     make_help_button,
     plain_number_field,
@@ -141,32 +144,32 @@ class ActionEditorDialog(QDialog):
         self.launch_mode.addItems(LAUNCH_MODES)
         self.launch_mode.setCurrentText(action.launch_mode if action.launch_mode in LAUNCH_MODES else "Show")
 
-        self.movement_minutes = QSpinBox()
-        self.movement_seconds = QSpinBox()
-        self.movement_milliseconds = QSpinBox()
+        self.movement_minutes = PlaceholderSpinBox()
+        self.movement_seconds = PlaceholderSpinBox()
+        self.movement_milliseconds = PlaceholderSpinBox()
         self.use_area = QCheckBox("Random Location for Mouse Action")
         self.use_area.setChecked(action.position_mode == PositionMode.AREA.value)
         self.use_area.toggled.connect(self._refresh_dynamic_panel)
 
-        self.screen_min = QDoubleSpinBox()
-        self.screen_max = QDoubleSpinBox()
-        self.screen_minutes = QSpinBox()
-        self.screen_seconds = QSpinBox()
-        self.screen_milliseconds = QSpinBox()
+        self.screen_min = PlaceholderDoubleSpinBox()
+        self.screen_max = PlaceholderDoubleSpinBox()
+        self.screen_minutes = PlaceholderSpinBox()
+        self.screen_seconds = PlaceholderSpinBox()
+        self.screen_milliseconds = PlaceholderSpinBox()
         self.pixel_x = QLineEdit("" if action.pixel_x is None else str(action.pixel_x))
         self.pixel_y = QLineEdit("" if action.pixel_y is None else str(action.pixel_y))
-        self.pixel_r = QSpinBox()
-        self.pixel_g = QSpinBox()
-        self.pixel_b = QSpinBox()
-        self.pixel_tolerance = QDoubleSpinBox()
-        self.pixel_wait_minutes = QSpinBox()
-        self.pixel_wait_seconds = QSpinBox()
-        self.pixel_wait_milliseconds = QSpinBox()
+        self.pixel_r = PlaceholderSpinBox()
+        self.pixel_g = PlaceholderSpinBox()
+        self.pixel_b = PlaceholderSpinBox()
+        self.pixel_tolerance = PlaceholderDoubleSpinBox()
+        self.pixel_wait_minutes = PlaceholderSpinBox()
+        self.pixel_wait_seconds = PlaceholderSpinBox()
+        self.pixel_wait_milliseconds = PlaceholderSpinBox()
         self.picture_path = QLineEdit(action.picture_path)
-        self.picture_tolerance = QDoubleSpinBox()
-        self.picture_wait_minutes = QSpinBox()
-        self.picture_wait_seconds = QSpinBox()
-        self.picture_wait_milliseconds = QSpinBox()
+        self.picture_tolerance = PlaceholderDoubleSpinBox()
+        self.picture_wait_minutes = PlaceholderSpinBox()
+        self.picture_wait_seconds = PlaceholderSpinBox()
+        self.picture_wait_milliseconds = PlaceholderSpinBox()
         self.picture_found_animate = QCheckBox("Animate mouse to picture")
         self.picture_found_random_point = QCheckBox("Use random point within picture")
         self.screen_text_pattern = QLineEdit(action.screen_text_pattern)
@@ -242,7 +245,8 @@ class ActionEditorDialog(QDialog):
             "Start Action as Background Action",
             "When checked, this action will execute as a background task rather than a sequential task. "
             "When this happens, it continues executing in the background, and the script continues to move "
-            "through the sequential actions.",
+            "through the sequential actions. If the action is already saved in Background Actions, this "
+            "setting has no effect because the action already runs in the background.",
         )
         bottom_row.addWidget(background_help)
         bottom_row.addStretch(1)
@@ -271,6 +275,8 @@ class ActionEditorDialog(QDialog):
         field.setKeyboardTracking(False)
         field.setMinimumWidth(92)
         field.setMinimumHeight(34)
+        if field.minimum() <= 0 <= field.maximum():
+            field.lineEdit().setPlaceholderText("0")
 
     def _time_row(self, minutes: QSpinBox, seconds: QSpinBox, milliseconds: QSpinBox) -> QWidget:
         return time_row(minutes, seconds, milliseconds)
@@ -290,7 +296,7 @@ class ActionEditorDialog(QDialog):
                     widget.deleteLater()
         action_type = self._actual_action_type()
         self.general_settings.set_repeat_visible(action_type != ActionType.STOP_ANZ_CLICKER.value)
-        if action_type == ActionType.STOP_ANZ_CLICKER.value:
+        if action_type == ActionType.STOP_ANZ_CLICKER.value or self.original_group == BACKGROUND_GROUP:
             self.start_as_background.setChecked(False)
             self.start_as_background.setEnabled(False)
         else:
@@ -718,7 +724,7 @@ class ActionEditorDialog(QDialog):
             enabled=self.enabled.isChecked(),
             preset_name=display.removeprefix(PRESET_PREFIX) if display.startswith(PRESET_PREFIX) else "",
             execution_group=self.original_group,
-            start_as_background=self.start_as_background.isChecked(),
+            start_as_background=self.start_as_background.isChecked() if self.original_group != BACKGROUND_GROUP else False,
             key=self.key.text().strip(),
             launch_path=self.launch_path.text().strip(),
             launch_args=self.launch_args.text().strip(),

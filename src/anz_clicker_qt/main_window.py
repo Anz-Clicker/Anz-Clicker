@@ -60,6 +60,7 @@ from .theme import build_stylesheet
 
 
 from .widgets import (
+    ActionTabBar,
     ActionTableModel,
     ActionTableView,
     KeyCaptureLineEdit,
@@ -104,6 +105,8 @@ class MainWindow(QMainWindow):
         self.runner = ActionRunner(lambda text: self.runnerStatus.emit(text), settings=self.app_settings)
         self.runnerStatus.connect(self._set_status)
         self.run_controls_active = False
+        self._editing_locked = False
+        self.script_mutation_buttons: list[QPushButton] = []
         self.run_started_at: float | None = None
         self.run_last_tick_at: float | None = None
         self.run_elapsed_active_seconds = 0.0
@@ -219,6 +222,8 @@ class MainWindow(QMainWindow):
                 button.clicked.connect(self.save_as_script)
             else:
                 button.clicked.connect(self.load_script)
+            if label in {"New Script", "Load Script"}:
+                self.script_mutation_buttons.append(button)
             layout.addWidget(button)
 
         self.theme_button = QPushButton("Dark Mode")
@@ -309,6 +314,9 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.tabs.setObjectName("ActionTabs")
+        self.action_tab_bar = ActionTabBar()
+        self.action_tab_bar.actionDropped.connect(self.move_action_to_group)
+        self.tabs.setTabBar(self.action_tab_bar)
         self.sequential_pane = QueuePane("Sequential", self.sequential_model, show_repeat=True)
         self.background_pane = QueuePane("Background", self.background_model, show_repeat=False)
         self.sequential_pane.addRequested.connect(self.handle_add_request)
@@ -327,6 +335,8 @@ class MainWindow(QMainWindow):
         self.background_pane.table.editRequested.connect(self.edit_current_row)
         self.sequential_pane.table.deleteRequested.connect(self.delete_current_row)
         self.background_pane.table.deleteRequested.connect(self.delete_current_row)
+        self.sequential_pane.table.actionDropped.connect(self.move_action_by_drag)
+        self.background_pane.table.actionDropped.connect(self.move_action_by_drag)
         self.tabs.currentChanged.connect(lambda *_: self.update_action_button_states())
         self.tabs.addTab(self.sequential_pane, "Sequential Actions (0)")
         self.tabs.addTab(self.background_pane, "Background Actions (0)")
@@ -591,6 +601,8 @@ class MainWindow(QMainWindow):
         return Action.from_dict(default.to_dict()) if default else Action(action_type=first)
 
     def handle_add_request(self, group_name: str) -> None:
+        if self._editing_locked:
+            return
         model = self.sequential_model if group_name == "Sequential" else self.background_model
         action = self._top_visible_action_template()
         action.execution_group = SEQUENTIAL_GROUP if group_name == "Sequential" else BACKGROUND_GROUP
@@ -606,6 +618,8 @@ class MainWindow(QMainWindow):
         self._show_action_editor(editor, accept)
 
     def edit_current_row(self) -> None:
+        if self._editing_locked:
+            return
         row = self.current_row()
         if row < 0:
             return
@@ -621,6 +635,8 @@ class MainWindow(QMainWindow):
         self._show_action_editor(editor, accept)
 
     def move_current_row(self, offset: int) -> None:
+        if self._editing_locked:
+            return
         row = self.current_row()
         if row < 0:
             return
@@ -628,7 +644,44 @@ class MainWindow(QMainWindow):
         self.current_table().selectRow(new_row)
         self.update_action_button_states()
 
+    def _model_and_table_for_group(self, group_name: str) -> tuple[ActionTableModel, ActionTableView]:
+        if group_name == "Sequential":
+            return self.sequential_model, self.sequential_pane.table
+        return self.background_model, self.background_pane.table
+
+    def move_action_by_drag(self, source_group: str, source_row: int, target_group: str, insertion_row: int) -> None:
+        if self._editing_locked:
+            return
+        if source_group == target_group:
+            model, table = self._model_and_table_for_group(source_group)
+            new_row = model.move_row_to(source_row, insertion_row)
+            table.selectRow(new_row)
+            self.update_action_button_states()
+            return
+        self._transfer_action(source_group, source_row, target_group, insertion_row)
+
+    def move_action_to_group(self, source_group: str, source_row: int, target_group: str) -> None:
+        if self._editing_locked or source_group == target_group:
+            return
+        target_model, _target_table = self._model_and_table_for_group(target_group)
+        self._transfer_action(source_group, source_row, target_group, target_model.rowCount())
+
+    def _transfer_action(self, source_group: str, source_row: int, target_group: str, insertion_row: int) -> None:
+        source_model, source_table = self._model_and_table_for_group(source_group)
+        target_model, _target_table = self._model_and_table_for_group(target_group)
+        action = source_model.take_row(source_row)
+        if action is None:
+            return
+        action.execution_group = SEQUENTIAL_GROUP if target_group == "Sequential" else BACKGROUND_GROUP
+        if target_group == "Background":
+            action.start_as_background = False
+        target_model.insert_existing_row(insertion_row, action)
+        self._select_nearest_row(source_table, source_model, source_row)
+        self.update_action_button_states()
+
     def show_queue_menu(self, group_name: str, global_pos: QPoint) -> None:
+        if self._editing_locked:
+            return
         table = self.sequential_pane.table if group_name == "Sequential" else self.background_pane.table
         local = table.viewport().mapFromGlobal(global_pos)
         if table.viewport().rect().contains(local):
@@ -656,6 +709,8 @@ class MainWindow(QMainWindow):
         menu.exec(global_pos)
 
     def show_overflow_menu(self, group_name: str, global_pos: QPoint) -> None:
+        if self._editing_locked:
+            return
         if self._open_overflow_menu and self._open_overflow_menu.isVisible() and self._open_overflow_group == group_name:
             self._open_overflow_menu.close()
             self._open_overflow_menu = None
@@ -693,6 +748,8 @@ class MainWindow(QMainWindow):
         return action
 
     def delete_current_row(self) -> None:
+        if self._editing_locked:
+            return
         row = self.current_row()
         if row >= 0:
             model = self.current_model()
@@ -702,6 +759,8 @@ class MainWindow(QMainWindow):
             self.update_action_button_states()
 
     def duplicate_current_row(self) -> None:
+        if self._editing_locked:
+            return
         row = self.current_row()
         if row >= 0:
             new_row = self.current_model().duplicate_row(row)
@@ -709,6 +768,8 @@ class MainWindow(QMainWindow):
             self.update_action_button_states()
 
     def toggle_current_enabled(self) -> None:
+        if self._editing_locked:
+            return
         row = self.current_row()
         if row < 0:
             return
@@ -718,7 +779,7 @@ class MainWindow(QMainWindow):
         self.update_action_button_states()
 
     def send_current_to_background(self) -> None:
-        if self.tabs.currentIndex() == 1:
+        if self._editing_locked or self.tabs.currentIndex() == 1:
             return
         row = self.current_row()
         if row < 0:
@@ -726,12 +787,13 @@ class MainWindow(QMainWindow):
         action = self.sequential_model.take_row(row)
         if action:
             action.execution_group = BACKGROUND_GROUP
+            action.start_as_background = False
             self.background_model.insert_existing_row(self.background_model.rowCount(), action)
             self._select_nearest_row(self.sequential_pane.table, self.sequential_model, row)
             self.update_action_button_states()
 
     def send_current_to_sequential(self) -> None:
-        if self.tabs.currentIndex() == 0:
+        if self._editing_locked or self.tabs.currentIndex() == 0:
             return
         row = self.current_row()
         if row < 0:
@@ -751,6 +813,8 @@ class MainWindow(QMainWindow):
             table.setCurrentIndex(QModelIndex())
 
     def save_selected_as_custom(self) -> None:
+        if self._editing_locked:
+            return
         row = self.current_row()
         if row < 0:
             return
@@ -766,6 +830,8 @@ class MainWindow(QMainWindow):
         self.current_model().replace_row(row, action)
 
     def edit_defaults(self) -> None:
+        if self._editing_locked:
+            return
         row = self.current_row()
         template = Action.from_dict(self.current_model().actions[row].to_dict()) if row >= 0 else self._top_visible_action_template()
         editor = ActionEditorDialog(template, self.action_choices(), self.preset_store, self, "Edit Default Actions")
@@ -780,6 +846,8 @@ class MainWindow(QMainWindow):
         self._show_action_editor(editor, accept)
 
     def edit_action_order(self) -> None:
+        if self._editing_locked:
+            return
         default_order = BUILT_IN_ACTION_TYPES + [f"{PRESET_PREFIX}{name}" for name in self.preset_store.custom_names()]
         editor = ActionOrderDialog(self.preset_store.ordered_action_names(BUILT_IN_ACTION_TYPES), self.preset_store.hidden_actions, default_order, self)
         accepted = editor.exec() == QDialog.Accepted
@@ -805,13 +873,15 @@ class MainWindow(QMainWindow):
         return choice == QMessageBox.Yes
 
     def new_script(self) -> None:
+        if self._editing_locked:
+            return
         if not self._confirm_continue_with_unsaved_changes():
             return
         self._suppress_dirty = True
         self.sequential_model.reset_actions([])
         self.background_model.reset_actions([])
         self.sequential_pane.repeat_input.setText("1")
-        self.sequential_pane.random_repeat_input.setText("0")
+        self.sequential_pane.random_repeat_input.clear()
         self._suppress_dirty = False
         self.current_script_path = None
         self.current_script_metadata = self._new_script_metadata()
@@ -903,6 +973,8 @@ class MainWindow(QMainWindow):
         return True
 
     def load_script(self) -> None:
+        if self._editing_locked:
+            return
         if not self._confirm_continue_with_unsaved_changes():
             return
         default_folder = self._default_script_folder()
@@ -925,11 +997,12 @@ class MainWindow(QMainWindow):
             action.execution_group = SEQUENTIAL_GROUP
         for action in background:
             action.execution_group = BACKGROUND_GROUP
+            action.start_as_background = False
         self._suppress_dirty = True
         self.sequential_model.reset_actions(sequential)
         self.background_model.reset_actions(background)
         self.sequential_pane.repeat_input.setText(str(sequential_repeat))
-        self.sequential_pane.random_repeat_input.setText(str(random_repeat))
+        self.sequential_pane.random_repeat_input.setText("" if random_repeat == 0 else str(random_repeat))
         self._suppress_dirty = False
         self.current_script_path = Path(path)
         self.current_script_metadata = metadata
@@ -1027,10 +1100,12 @@ class MainWindow(QMainWindow):
         return folder
 
     def load_sample_actions(self) -> None:
+        if self._editing_locked:
+            return
         self.sequential_model.reset_actions(self._sample_sequential_actions())
         self.background_model.reset_actions(self._sample_background_actions())
         self.sequential_pane.repeat_input.setText("1")
-        self.sequential_pane.random_repeat_input.setText("0")
+        self.sequential_pane.random_repeat_input.clear()
         self.current_script_metadata = self._new_script_metadata()
         self._mark_dirty()
         self.update_action_button_states()
@@ -1058,6 +1133,9 @@ class MainWindow(QMainWindow):
         self._refresh_run_button_labels()
 
     def start_run(self) -> None:
+        if self._open_editors:
+            QMessageBox.information(self, "Action Editor Open", "Save or cancel the open action editor before starting the script.")
+            return
         actions = self.sequential_model.actions + self.background_model.actions
         if not actions:
             QMessageBox.information(self, "No Actions", "Add at least one action before starting.")
@@ -1088,6 +1166,7 @@ class MainWindow(QMainWindow):
             self.run_time_value.setText("00:00:00")
         self.run_timer.start(250)
         self.run_controls_active = True
+        self._set_script_editing_locked(True)
         self._replace_icon_registration(self.start_button, "stop", 22)
         self.start_button.setIcon(self._make_icon("stop"))
         self.pause_button.setEnabled(True)
@@ -1109,6 +1188,7 @@ class MainWindow(QMainWindow):
             self._update_run_time()
             self.run_last_tick_at = None
             self.run_controls_active = False
+            self._set_script_editing_locked(False)
             self._replace_icon_registration(self.start_button, "start", 22)
             self.start_button.setIcon(self._make_icon("start"))
             self.pause_button.setEnabled(False)
@@ -1288,11 +1368,27 @@ class MainWindow(QMainWindow):
         row = self.current_row()
         has_selection = row >= 0
         for button in getattr(self, "row_selection_buttons", []):
-            button.setEnabled(has_selection)
+            button.setEnabled(has_selection and not self._editing_locked)
+        if hasattr(self, "primary_sidebar_items"):
+            self.primary_sidebar_items[0].setEnabled(not self._editing_locked)
+        for button in getattr(self, "library_sidebar_items", []):
+            button.setEnabled(not self._editing_locked)
         self.current_pane().update_button_states(row)
         other_pane = self.background_pane if self.current_pane() is self.sequential_pane else self.sequential_pane
         other_index = other_pane.table.currentIndex()
         other_pane.update_button_states(other_index.row() if other_index.isValid() else -1)
+        if self._editing_locked:
+            self.current_pane().update_button_states(-1)
+            other_pane.update_button_states(-1)
+
+    def _set_script_editing_locked(self, locked: bool) -> None:
+        self._editing_locked = locked
+        self.sequential_pane.set_editing_locked(locked)
+        self.background_pane.set_editing_locked(locked)
+        self.action_tab_bar.set_editing_locked(locked)
+        for button in self.script_mutation_buttons:
+            button.setEnabled(not locked)
+        self.update_action_button_states()
 
 
 def run() -> int:

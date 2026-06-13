@@ -4,6 +4,12 @@ All notable Anz Clicker changes are grouped by version. The current source versi
 
 ## Unreleased
 
+- Added drag-and-drop action reordering within queues and transfers through the Sequential/Background tab headers.
+- Locked script editing while execution is running while retaining Stop and Pause controls.
+- Changed zero-valued action number fields to show `0` as placeholder text for easier replacement.
+- Added an application disclaimer covering anti-cheat detection and use-at-your-own-risk behavior.
+- Clarified and normalized `Start Action as Background Action` so it has no effect on actions already in the Background Actions lane.
+- Added code signing to the production-release checklist.
 - Replaced portable ZIP releases with a Windows installer built through Inno Setup 6.
 - Moved installed-build scripts to `%LOCALAPPDATA%\Anz Clicker\scripts`.
 - Moved installed-build settings, custom actions, captures, and future license files to `%LOCALAPPDATA%\Anz Clicker\user-data`.
