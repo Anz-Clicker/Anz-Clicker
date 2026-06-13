@@ -20,6 +20,7 @@ def build_stylesheet(dark: bool) -> str:
         disabled_border = "rgba(35, 49, 73, 0.55)"
         row_hover = "#13213a"
         row_selected = "#17345f"
+        row_selected_hover = "#24538f"
         input_bg = "#0d1628"
         scrollbar_track = "#0b1220"
         scrollbar_handle = "#33435f"
@@ -42,6 +43,7 @@ def build_stylesheet(dark: bool) -> str:
         disabled_border = "rgba(217, 226, 240, 0.62)"
         row_hover = "#f1f6ff"
         row_selected = "#dceaff"
+        row_selected_hover = "#b9d3ff"
         input_bg = "#ffffff"
         scrollbar_track = "#edf2f8"
         scrollbar_handle = "#b8c5d8"
@@ -259,6 +261,10 @@ def build_stylesheet(dark: bool) -> str:
     }}
     QTableView#ActionTableView::item:hover {{
         background: {row_hover};
+    }}
+    QTableView#ActionTableView::item:selected:hover {{
+        background: {row_selected_hover};
+        color: {fg};
     }}
     QTableView#ActionTableView QScrollBar:vertical {{
         background: {scrollbar_track};

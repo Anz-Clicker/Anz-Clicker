@@ -411,7 +411,12 @@ class RowHoverDelegate(QStyledItemDelegate):
         return row_option
 
     def paint(self, painter: QPainter, option, index: QModelIndex) -> None:
+        table = self.parent()
+        painter.save()
+        if isinstance(table, ActionTableView) and index.row() == table.dragging_row:
+            painter.setOpacity(0.32)
         super().paint(painter, self._row_option(option, index), index)
+        painter.restore()
 
 
 class EnabledCheckboxDelegate(RowHoverDelegate):
@@ -420,10 +425,13 @@ class EnabledCheckboxDelegate(RowHoverDelegate):
             super().paint(painter, option, index)
             return
         option = self._row_option(option, index)
+        table = self.parent()
+        painter.save()
+        if isinstance(table, ActionTableView) and index.row() == table.dragging_row:
+            painter.setOpacity(0.32)
         style = option.widget.style() if option.widget else QApplication.style()
         style.drawPrimitive(QStyle.PE_PanelItemViewItem, option, painter, option.widget)
         checked = index.data(Qt.CheckStateRole) == Qt.Checked
-        painter.save()
         painter.setRenderHint(QPainter.Antialiasing)
         dark = option.palette.window().color().lightness() < 128
         rect = option.rect.adjusted(12, 8, -12, -8)
@@ -449,6 +457,39 @@ class EnabledCheckboxDelegate(RowHoverDelegate):
         return super().editorEvent(event, model, option, index)
 
 
+class ActionDropIndicator(QWidget):
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.line_y = -1
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.hide()
+
+    def set_target(self, line_y: int) -> None:
+        self.line_y = max(3, min(line_y, self.height() - 4))
+        self.show()
+        self.raise_()
+        self.update()
+
+    def clear_target(self) -> None:
+        self.line_y = -1
+        self.hide()
+
+    def paintEvent(self, event) -> None:
+        if self.line_y < 0:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        accent = self.palette().highlight().color()
+        painter.setPen(QPen(accent, 3))
+        painter.drawLine(8, self.line_y, self.width() - 8, self.line_y)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(accent)
+        painter.drawEllipse(QPoint(8, self.line_y), 4, 4)
+        painter.drawEllipse(QPoint(self.width() - 8, self.line_y), 4, 4)
+
+
 class ActionTableView(QTableView):
     contextRequested = Signal(QPoint)
     editRequested = Signal()
@@ -460,6 +501,7 @@ class ActionTableView(QTableView):
         self.group_name = group_name
         self.editing_locked = False
         self.hovered_row = -1
+        self.dragging_row = -1
         self.setObjectName("ActionTableView")
         self.setModel(model)
         self.setSelectionBehavior(QTableView.SelectRows)
@@ -475,7 +517,7 @@ class ActionTableView(QTableView):
         self.viewport().setMouseTracking(True)
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
-        self.setDropIndicatorShown(True)
+        self.setDropIndicatorShown(False)
         self.setDragDropMode(QAbstractItemView.DragDrop)
         self.setDefaultDropAction(Qt.MoveAction)
         self.setWordWrap(False)
@@ -498,10 +540,13 @@ class ActionTableView(QTableView):
         self.setItemDelegate(RowHoverDelegate(self))
         self.setItemDelegateForColumn(1, EnabledCheckboxDelegate(self))
         self.doubleClicked.connect(lambda _index: self.editRequested.emit())
+        self.drop_indicator = ActionDropIndicator(self.viewport())
+        self.drop_indicator.setGeometry(self.viewport().rect())
         self._apply_rounded_mask()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self.drop_indicator.setGeometry(self.viewport().rect())
         self._apply_rounded_mask()
 
     def _apply_rounded_mask(self) -> None:
@@ -553,11 +598,25 @@ class ActionTableView(QTableView):
         drag.setMimeData(encode_action_drag(self.group_name, row))
         row_rect = self.visualRect(self.model().index(row, 0))
         row_rect.setRight(self.viewport().width())
-        pixmap = self.viewport().grab(row_rect)
+        source_pixmap = self.viewport().grab(row_rect)
+        pixmap = source_pixmap.copy()
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setOpacity(0.88)
+        painter.drawPixmap(0, 0, source_pixmap)
+        painter.setOpacity(1.0)
+        painter.setPen(QPen(self.palette().highlight().color(), 2))
+        painter.drawRoundedRect(pixmap.rect().adjusted(1, 1, -2, -2), 7, 7)
+        painter.end()
         drag.setPixmap(pixmap)
-        drag.setHotSpot(QPoint(min(24, pixmap.width() // 2), pixmap.height() // 2))
+        drag.setHotSpot(QPoint(min(30, pixmap.width() // 2), pixmap.height() // 2))
+        self.dragging_row = row
+        self.viewport().update()
         self.viewport().setCursor(Qt.ClosedHandCursor)
         drag.exec(Qt.MoveAction)
+        self.dragging_row = -1
+        self.drop_indicator.clear_target()
+        self.viewport().update()
         self.viewport().unsetCursor()
 
     def dragEnterEvent(self, event) -> None:
@@ -568,25 +627,40 @@ class ActionTableView(QTableView):
 
     def dragMoveEvent(self, event) -> None:
         if not self.editing_locked and decode_action_drag(event.mimeData()):
+            _insertion_row, line_y = self._drop_location(event.position().toPoint())
+            self.drop_indicator.set_target(line_y)
             event.acceptProposedAction()
             return
+        self.drop_indicator.clear_target()
         event.ignore()
+
+    def dragLeaveEvent(self, event) -> None:
+        self.drop_indicator.clear_target()
+        super().dragLeaveEvent(event)
 
     def dropEvent(self, event) -> None:
         payload = decode_action_drag(event.mimeData())
         if self.editing_locked or payload is None:
+            self.drop_indicator.clear_target()
             event.ignore()
             return
         source_group, source_row = payload
-        position = event.position().toPoint()
-        index = self.indexAt(position)
-        insertion_row = self.model().rowCount()
-        if index.isValid():
-            insertion_row = index.row()
-            if position.y() > self.visualRect(index).center().y():
-                insertion_row += 1
+        insertion_row, _line_y = self._drop_location(event.position().toPoint())
+        self.drop_indicator.clear_target()
         self.actionDropped.emit(source_group, source_row, self.group_name, insertion_row)
         event.acceptProposedAction()
+
+    def _drop_location(self, position: QPoint) -> tuple[int, int]:
+        index = self.indexAt(position)
+        if index.isValid():
+            rect = self.visualRect(index)
+            after = position.y() > rect.center().y()
+            return index.row() + (1 if after else 0), rect.bottom() + 1 if after else rect.top()
+        row_count = self.model().rowCount()
+        if row_count:
+            last_rect = self.visualRect(self.model().index(row_count - 1, 0))
+            return row_count, last_rect.bottom() + 1
+        return 0, 4
 
 
 class ActionTabBar(QTabBar):
