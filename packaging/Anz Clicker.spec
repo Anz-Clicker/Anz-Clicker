@@ -58,5 +58,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="Anz Clicker Portable",
+    name="Anz Clicker",
 )

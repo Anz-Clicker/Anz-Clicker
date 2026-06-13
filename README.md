@@ -39,28 +39,30 @@ Install development dependencies with:
 python -m pip install -r docs/requirements.txt
 ```
 
-## Portable Build
+## Windows Installer
 
-Portable builds are generated from source and are not committed to Git. Build a
-release with:
+Install [Inno Setup 6](https://jrsoftware.org/isdl.php), then build the Windows
+installer from source with:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging/build_release.ps1
 ```
 
-The versioned folder is created under `dist/`, and its distributable ZIP is
-created under `release/`. Attach that ZIP to the matching GitHub Release.
+The tested PyInstaller application is staged under `dist/Anz Clicker/`, and the
+single distributable installer is created under `release/`. Attach the setup
+EXE to the matching GitHub Release.
 
-User-created scripts live in `scripts/`. Settings, custom actions, captures, and
-future license files live in `user-data/`. Both directories are preserved when
-updating a portable installation.
+Installed program files live under `Program Files`. User-created scripts live
+in `%LOCALAPPDATA%\Anz Clicker\scripts`; settings, custom actions, captures, and
+future license files live in `%LOCALAPPDATA%\Anz Clicker\user-data`. Updates
+and uninstall/reinstall operations do not replace those user-owned files.
 
 ## Repository Layout
 
 ```text
 assets/       Branding and theme icons
 config/       Example configuration and preset files
-docs/         Changelog, developer wiki, requirements, and portable notes
+docs/         Changelog, developer wiki, requirements, and release notes
 packaging/    Canonical PyInstaller specification and release builder
 scripts/      Default user script workspace
 src/          Application source code

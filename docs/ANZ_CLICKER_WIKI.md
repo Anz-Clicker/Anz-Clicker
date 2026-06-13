@@ -203,7 +203,7 @@ Wait-for-screen-text uses OCR through `screen_tools.py`.
 - Prefer bundled `vendor/tesseract/tesseract.exe` during source runs and packaged `tesseract/tesseract.exe` in releases.
 - Keep OCR temp files under the app/captures area, not arbitrary system temp paths.
 - OCR text matching should support plain string and regular expression modes.
-- OCR-related packaging changes belong in `packaging/Anz Clicker Portable.spec`.
+- OCR-related packaging changes belong in `packaging/Anz Clicker.spec`.
 
 ## Testing And Packaging
 
@@ -222,18 +222,22 @@ python -c "import sys; sys.path.insert(0, 'src'); import anz_clicker_qt.widgets,
 Packaging should use the single canonical spec:
 
 ```powershell
-pyinstaller "packaging/Anz Clicker Portable.spec"
+pyinstaller "packaging/Anz Clicker.spec"
 ```
 
-Do not add new duplicate spec files. Update `packaging/Anz Clicker Portable.spec` when bundled assets change.
+Do not add new duplicate spec files. Update `packaging/Anz Clicker.spec` when bundled assets change.
 
-Official portable releases should be built with:
+Official Windows installers should be built with:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging/build_release.ps1
 ```
 
-Do not commit generated `portable/`, `dist/`, `release/`, or `build/` output. Attach the generated release ZIP to GitHub Releases. Future update logic must preserve `scripts/` and `user-data/`.
+Do not commit generated `dist/`, `release/`, or `build/` output. Attach the
+generated setup EXE to GitHub Releases. Installed program files belong under
+`Program Files`; scripts and user-owned configuration belong under
+`%LOCALAPPDATA%\Anz Clicker` and must never be deleted by normal upgrades or
+uninstall operations.
 
 ## Future Refactor Targets
 
