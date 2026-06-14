@@ -232,11 +232,23 @@ pyinstaller "packaging/Anz Clicker.spec"
 
 Do not add new duplicate spec files. Update `packaging/Anz Clicker.spec` when bundled assets change.
 
-Official Windows installers should be built with:
+Official Windows releases should normally be prepared from a clean `main`
+branch by double-clicking `Create Update.cmd` in the repository root. The
+launcher preserves the console window after completion so build output and
+errors remain visible.
+
+The equivalent command is:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File packaging/build_release.ps1
+powershell -ExecutionPolicy Bypass -File packaging/create_release.ps1
 ```
+
+The release creator prompts for a semantic version, requires that it is newer
+than the current version, updates `version.py`, moves the current Unreleased
+changelog notes into a dated version section, and invokes
+`packaging/build_release.ps1`. If testing or packaging fails, it restores the
+original version and changelog. Use `build_release.ps1` directly only when
+those release metadata changes have already been prepared.
 
 Do not commit generated `dist/`, `release/`, or `build/` output. Attach the
 generated setup EXE to GitHub Releases. Installed program files belong under

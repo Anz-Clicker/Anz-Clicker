@@ -4,6 +4,8 @@ All notable Anz Clicker changes are grouped by version. The current source versi
 
 ## Unreleased
 
+- Added a root-level `Create Update.cmd` launcher for starting the interactive release builder by double-clicking.
+- Added an interactive release creator that validates a clean `main` branch, updates the version and changelog, runs the canonical build, and restores release metadata automatically if packaging fails.
 - Added a Settings update checker backed by the latest published GitHub release.
 - Added in-app installer download progress, cancellation, SHA-256 verification when supplied by GitHub, and automatic installer handoff with application restart.
 - Moved the version label to the Settings header.

@@ -1,7 +1,28 @@
 # Windows Installer Packaging
 
-Install Inno Setup 6, then run the canonical release build from the repository
-root:
+Install Inno Setup 6, merge the intended changes into a clean `main` branch,
+then double-click `Create Update.cmd` in the repository root. The launcher
+keeps the result visible after the build completes.
+
+The equivalent interactive command is:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/create_release.ps1
+```
+
+The script prompts for the new semantic version, updates `version.py`, rolls
+the Unreleased changelog entries into the new version, and invokes the
+canonical release build. If the build fails, the version and changelog edits
+are restored automatically.
+
+For automation, provide the version directly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/create_release.ps1 -Version 1.4.0
+```
+
+The low-level build command remains available when the version and changelog
+have already been prepared:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging/build_release.ps1
