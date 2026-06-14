@@ -557,6 +557,7 @@ class ActionRunner:
             nested_action.execution_group = ExecutionGroup.SEQUENTIAL.value
         for nested_action in background:
             nested_action.execution_group = ExecutionGroup.PARALLEL.value
+            nested_action.start_as_background = False
         cycles = max(1, int(payload.get("sequential_repeat_count", 1) or 1))
         random_cycles = max(0, int(payload.get("sequential_random_repeat_count", 0) or 0))
         if random_cycles:

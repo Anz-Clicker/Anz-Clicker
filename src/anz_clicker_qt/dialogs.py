@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import Signal
 from PySide6.QtGui import QColor, QMouseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -26,7 +27,7 @@ from PySide6.QtWidgets import (
 from app_settings import AppSettings
 from .constants import APP_VERSION
 from .paths import scripts_dir, storage_root
-from .widgets import make_help_label
+from .widgets import PlaceholderSpinBox, make_help_label
 
 
 class ActionOrderDialog(QDialog):
@@ -138,6 +139,8 @@ class ActionOrderDialog(QDialog):
 
 
 class SettingsDialog(QDialog):
+    checkUpdatesRequested = Signal()
+
     def __init__(self, settings: AppSettings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
@@ -148,9 +151,15 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(22, 22, 22, 18)
         layout.setSpacing(16)
 
+        title_row = QHBoxLayout()
         title = QLabel("Settings")
         title.setObjectName("SectionTitle")
-        layout.addWidget(title)
+        title_row.addWidget(title)
+        title_row.addStretch(1)
+        version_label = QLabel(f"Version {APP_VERSION}")
+        version_label.setObjectName("VersionLabel")
+        title_row.addWidget(version_label)
+        layout.addLayout(title_row)
 
         form = QFormLayout()
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
@@ -204,9 +213,12 @@ class SettingsDialog(QDialog):
         reset_button = QPushButton("Reset to Defaults")
         reset_button.clicked.connect(self._reset_to_defaults)
         bottom_row.addWidget(reset_button)
-        version_label = QLabel(f"Version {APP_VERSION}")
-        version_label.setObjectName("VersionLabel")
-        bottom_row.addWidget(version_label)
+        disclaimer_button = QPushButton("Disclaimer")
+        disclaimer_button.clicked.connect(self._show_disclaimer)
+        bottom_row.addWidget(disclaimer_button)
+        self.check_updates_button = QPushButton("Check for Updates")
+        self.check_updates_button.clicked.connect(self.checkUpdatesRequested.emit)
+        bottom_row.addWidget(self.check_updates_button)
         bottom_row.addStretch(1)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._save)
@@ -215,12 +227,34 @@ class SettingsDialog(QDialog):
         layout.addLayout(bottom_row)
         self.resize(620, 350)
 
+    def set_update_checking(self, checking: bool) -> None:
+        self.check_updates_button.setEnabled(not checking)
+        self.check_updates_button.setText("Checking..." if checking else "Check for Updates")
+
+    def save_for_update(self) -> None:
+        self._save()
+
+    def _show_disclaimer(self) -> None:
+        QMessageBox.warning(
+            self,
+            "Anz Clicker Disclaimer",
+            "Anz Clicker should not be assumed to be undetectable by anti-cheat or automation-detection "
+            "systems used by games or other software.\n\n"
+            "Using automation may violate the rules or terms of a game, service, or application and may "
+            "result in warnings, suspensions, bans, or other action against an account. The creator is not "
+            "responsible for consequences resulting from use of this tool.\n\n"
+            "Anz Clicker is provided strictly as a use-at-your-own-risk tool. Review the applicable rules "
+            "before using it.",
+        )
+
     def _spin(self, minimum: int, maximum: int, value: int) -> QSpinBox:
-        field = QSpinBox()
+        field = PlaceholderSpinBox()
         field.setButtonSymbols(QSpinBox.NoButtons)
         field.setRange(minimum, maximum)
         field.setValue(value)
         field.setMinimumWidth(96)
+        if minimum <= 0 <= maximum:
+            field.lineEdit().setPlaceholderText("0")
         return field
 
     def _range_row(self, before: str, middle: str, after: str, low: int, high: int, prefix: str) -> QWidget:

@@ -4,6 +4,19 @@ All notable Anz Clicker changes are grouped by version. The current source versi
 
 ## Unreleased
 
+- Added a root-level `Create Update.cmd` launcher for starting the interactive release builder by double-clicking.
+- Added an interactive release creator that validates a clean `main` branch, updates the version and changelog, runs the canonical build, and restores release metadata automatically if packaging fails.
+- Added a Settings update checker backed by the latest published GitHub release.
+- Added in-app installer download progress, cancellation, SHA-256 verification when supplied by GitHub, and automatic installer handoff with application restart.
+- Moved the version label to the Settings header.
+- Strengthened selected-row hover contrast and added drag ghosting plus a full-width insertion marker for queue reordering.
+- Fixed queue drag initiation by advertising draggable/drop-enabled model rows, added a full-row drag preview, and changed action hover feedback from individual cells to the complete row.
+- Added drag-and-drop action reordering within queues and transfers through the Sequential/Background tab headers.
+- Locked script editing while execution is running while retaining Stop and Pause controls.
+- Changed zero-valued action number fields to show `0` as placeholder text for easier replacement.
+- Added an application disclaimer covering anti-cheat detection and use-at-your-own-risk behavior.
+- Clarified and normalized `Start Action as Background Action` so it has no effect on actions already in the Background Actions lane.
+- Added code signing to the production-release checklist.
 - Replaced portable ZIP releases with a Windows installer built through Inno Setup 6.
 - Moved installed-build scripts to `%LOCALAPPDATA%\Anz Clicker\scripts`.
 - Moved installed-build settings, custom actions, captures, and future license files to `%LOCALAPPDATA%\Anz Clicker\user-data`.

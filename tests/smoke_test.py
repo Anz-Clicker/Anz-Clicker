@@ -8,6 +8,8 @@ from pathlib import Path
 import shutil
 import sys
 
+from PySide6.QtCore import QModelIndex, Qt
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -19,7 +21,14 @@ from app_settings import AppSettings
 import input_controller
 from preset_store import PresetStore
 from anz_clicker_qt.paths import migrate_legacy_user_data, storage_root
-from anz_clicker_qt.widgets import target_label
+from anz_clicker_qt.updater import (
+    UpdateError,
+    installer_command,
+    is_newer_version,
+    parse_version,
+    release_from_payload,
+)
+from anz_clicker_qt.widgets import ActionTableModel, decode_action_drag, encode_action_drag, target_label
 
 
 TMP_ROOT = ROOT / "tmp_qt_doc_test" / "smoke_test"
@@ -51,6 +60,55 @@ def test_settings_round_trip() -> None:
     assert loaded.enhanced_humanlike_mouse is True
     assert loaded.default_script_folder == "scripts"
     assert loaded.remember_window_geometry is False
+
+
+def test_update_release_parsing_and_version_comparison() -> None:
+    payload = {
+        "tag_name": "v1.4.0",
+        "html_url": "https://github.com/Anz-Clicker/Anz-Clicker/releases/tag/v1.4.0",
+        "assets": [
+            {
+                "name": "source-notes.txt",
+                "browser_download_url": "https://github.com/Anz-Clicker/Anz-Clicker/releases/download/v1.4.0/source-notes.txt",
+            },
+            {
+                "name": "Anz Clicker Setup v1.4.0.exe",
+                "browser_download_url": "https://github.com/Anz-Clicker/Anz-Clicker/releases/download/v1.4.0/Anz.Clicker.Setup.exe",
+                "digest": "sha256:abc123",
+                "size": 123456,
+            },
+        ],
+    }
+    release = release_from_payload(payload)
+    assert release.version == "1.4.0"
+    assert release.installer_name == "Anz Clicker Setup v1.4.0.exe"
+    assert release.size == 123456
+    assert parse_version("v1.3.0") == (1, 3, 0)
+    assert is_newer_version(release.version, "1.3.0")
+    assert not is_newer_version("1.3.0", "1.3.0")
+
+    command = installer_command(Path("Anz Clicker Setup.exe"))
+    assert "/SILENT" in command
+    assert "/CLOSEAPPLICATIONS" in command
+    assert "/RESTARTAPPLICATIONS" in command
+    assert "/NORESTART" in command
+
+    try:
+        release_from_payload(
+            {
+                "tag_name": "v1.4.0",
+                "assets": [
+                    {
+                        "name": "unrelated-tool.exe",
+                        "browser_download_url": "https://github.com/Anz-Clicker/Anz-Clicker/releases/download/v1.4.0/unrelated-tool.exe",
+                    }
+                ],
+            }
+        )
+    except UpdateError as exc:
+        assert "does not include an Anz Clicker installer" in str(exc)
+    else:
+        raise AssertionError("An unrelated executable was accepted as the updater installer")
 
 
 def test_legacy_user_data_migration() -> None:
@@ -211,6 +269,45 @@ def test_script_payload_round_trip() -> None:
     assert loaded["sequential_repeat_count"] == 2
 
 
+def test_action_model_drag_reorder() -> None:
+    model = ActionTableModel(
+        [
+            Action(action_type=ActionType.LEFT_CLICK.value, comment="first"),
+            Action(action_type=ActionType.WAIT.value, comment="second"),
+            Action(action_type=ActionType.RIGHT_CLICK.value, comment="third"),
+        ]
+    )
+    assert model.move_row_to(0, 3) == 2
+    assert [action.comment for action in model.actions] == ["second", "third", "first"]
+    assert model.move_row_to(2, 0) == 0
+    assert [action.comment for action in model.actions] == ["first", "second", "third"]
+
+
+def test_action_rows_advertise_drag_and_drop() -> None:
+    model = ActionTableModel([Action(action_type=ActionType.WAIT.value)])
+    flags = model.flags(model.index(0, 0))
+    assert flags & Qt.ItemIsDragEnabled
+    assert flags & Qt.ItemIsDropEnabled
+    assert model.flags(QModelIndex()) & Qt.ItemIsDropEnabled
+    assert decode_action_drag(encode_action_drag("Sequential", 0)) == ("Sequential", 0)
+    model.set_editing_locked(True)
+    assert not (model.flags(model.index(0, 0)) & Qt.ItemIsDragEnabled)
+
+
+def test_background_action_flag_does_not_duplicate_planning() -> None:
+    import runner
+
+    action = Action(
+        action_type=ActionType.WAIT.value,
+        execution_group=ExecutionGroup.PARALLEL.value,
+        start_as_background=True,
+        delay_seconds=1,
+    )
+    plan = runner.ActionRunner()._build_runtime_plan([action], 1)
+    assert len(plan.initial_background_runs) == 1
+    assert plan.sequential_runs == []
+
+
 def test_nested_script_runtime_planning() -> None:
     nested_path = TMP_ROOT / "nested_script.json"
     nested_payload = {
@@ -302,6 +399,7 @@ def main() -> int:
     reset_tmp_root()
     tests = [
         test_settings_round_trip,
+        test_update_release_parsing_and_version_comparison,
         test_legacy_user_data_migration,
         test_frozen_storage_root_uses_user_profile_override,
         test_enhanced_mouse_path_is_interruptible_and_exact,
@@ -309,6 +407,9 @@ def main() -> int:
         test_action_serialization_round_trip,
         test_keyboard_action_target_labels_show_keys,
         test_script_payload_round_trip,
+        test_action_model_drag_reorder,
+        test_action_rows_advertise_drag_and_drop,
+        test_background_action_flag_does_not_duplicate_planning,
         test_nested_script_runtime_planning,
         test_stop_anz_clicker_action_sets_global_stop,
         test_runtime_planning_rejects_circular_nested_scripts,

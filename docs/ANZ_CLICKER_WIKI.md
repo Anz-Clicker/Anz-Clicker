@@ -162,7 +162,12 @@ Animated movement duration is controlled globally by Settings, not by an action-
 - UI code should import `APP_VERSION` from `anz_clicker_qt.constants`, which re-exports the version for existing callers.
 - Update `docs/CHANGELOG.md` whenever changing `APP_VERSION`.
 - Use semantic versioning loosely: patch for bug fixes, minor for user-facing features, and major only for breaking workflow or storage changes.
-- Packaging scripts should eventually read `APP_VERSION` so release folder and ZIP names stay consistent.
+- Packaging scripts read `APP_VERSION` so installer names stay consistent.
+- The in-app update checker reads the latest full release from the public GitHub Releases API.
+- Every published release intended for automatic updates must use a semantic tag such as `v1.4.0` and include an installer asset named `Anz Clicker Setup v1.4.0.exe`.
+- Update downloads use HTTPS and verify GitHub's SHA-256 asset digest when one is available.
+- The updater must run the standard unsaved-script guard before downloading an installer.
+- The updater launches Inno Setup with `/SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NORESTART` so the installed app is replaced and reopened while `%LOCALAPPDATA%` user data remains untouched.
 
 ## Icons And Theme
 
@@ -227,17 +232,37 @@ pyinstaller "packaging/Anz Clicker.spec"
 
 Do not add new duplicate spec files. Update `packaging/Anz Clicker.spec` when bundled assets change.
 
-Official Windows installers should be built with:
+Official Windows releases should normally be prepared from a clean `main`
+branch by double-clicking `Create Update.cmd` in the repository root. The
+launcher preserves the console window after completion so build output and
+errors remain visible.
+
+The equivalent command is:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File packaging/build_release.ps1
+powershell -ExecutionPolicy Bypass -File packaging/create_release.ps1
 ```
+
+The release creator prompts for a semantic version, requires that it is newer
+than the current version, updates `version.py`, moves the current Unreleased
+changelog notes into a dated version section, and invokes
+`packaging/build_release.ps1`. If testing or packaging fails, it restores the
+original version and changelog. Use `build_release.ps1` directly only when
+those release metadata changes have already been prepared.
 
 Do not commit generated `dist/`, `release/`, or `build/` output. Attach the
 generated setup EXE to GitHub Releases. Installed program files belong under
 `Program Files`; scripts and user-owned configuration belong under
 `%LOCALAPPDATA%\Anz Clicker` and must never be deleted by normal upgrades or
 uninstall operations.
+
+### Production Release Checklist
+
+- Run the complete smoke suite and launch-test the frozen executable.
+- Build and hash the Windows installer.
+- Obtain and configure a trusted Windows code-signing certificate before public production distribution.
+- Sign both the application executable and installer, then verify their signatures.
+- Confirm upgrades preserve `%LOCALAPPDATA%\Anz Clicker\scripts` and `user-data`.
 
 ## Future Refactor Targets
 

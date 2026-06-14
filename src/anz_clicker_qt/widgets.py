@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QEvent, QModelIndex, QPoint, QRect, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QKeyEvent, QMouseEvent, QPainter, QPainterPath, QPen, QRegion
+from PySide6.QtCore import QCoreApplication, QEvent, QMimeData, QModelIndex, QPoint, QRect, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QDrag, QIcon, QKeyEvent, QMouseEvent, QPainter, QPainterPath, QPen, QRegion
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -16,8 +16,12 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QDoubleSpinBox,
     QSpinBox,
+    QStyle,
+    QStyleOptionViewItem,
     QStyledItemDelegate,
+    QTabBar,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -30,6 +34,43 @@ from .icons import app_icon
 
 
 PICTURE_ACTIONS = {ActionType.WAIT_FOR_PICTURE.value, ActionType.AUTO_PICTURE_CLICKER.value}
+ACTION_DRAG_MIME = "application/x-anz-clicker-action-row"
+
+
+def encode_action_drag(group_name: str, row: int) -> QMimeData:
+    mime = QMimeData()
+    mime.setData(ACTION_DRAG_MIME, f"{group_name}\n{row}".encode("utf-8"))
+    return mime
+
+
+def decode_action_drag(mime: QMimeData) -> tuple[str, int] | None:
+    if not mime.hasFormat(ACTION_DRAG_MIME):
+        return None
+    try:
+        group_name, row = bytes(mime.data(ACTION_DRAG_MIME)).decode("utf-8").splitlines()
+        return group_name, int(row)
+    except (TypeError, ValueError):
+        return None
+
+
+class PlaceholderSpinBox(QSpinBox):
+    """Render zero as placeholder text while preserving a numeric zero value."""
+
+    def textFromValue(self, value: int) -> str:
+        return "" if value == 0 else super().textFromValue(value)
+
+    def valueFromText(self, text: str) -> int:
+        return 0 if not text.strip() else super().valueFromText(text)
+
+
+class PlaceholderDoubleSpinBox(QDoubleSpinBox):
+    """Floating-point counterpart to PlaceholderSpinBox."""
+
+    def textFromValue(self, value: float) -> str:
+        return "" if value == 0 else super().textFromValue(value)
+
+    def valueFromText(self, text: str) -> float:
+        return 0.0 if not text.strip() else super().valueFromText(text)
 
 
 def make_help_button(parent: QWidget, title: str, message: str) -> QPushButton:
@@ -57,6 +98,8 @@ def plain_number_field(field: QSpinBox) -> None:
     field.setKeyboardTracking(False)
     field.setMinimumWidth(92)
     field.setMinimumHeight(34)
+    if field.minimum() <= 0 <= field.maximum():
+        field.lineEdit().setPlaceholderText("0")
 
 
 def time_row(minutes: QSpinBox, seconds: QSpinBox, milliseconds: QSpinBox) -> QWidget:
@@ -76,14 +119,14 @@ class GeneralActionSettings:
     """Shared editor fields that every action supports."""
 
     def __init__(self, action: Action) -> None:
-        self.delay_minutes = QSpinBox()
-        self.delay_seconds = QSpinBox()
-        self.delay_milliseconds = QSpinBox()
-        self.random_delay_minutes = QSpinBox()
-        self.random_delay_seconds = QSpinBox()
-        self.random_delay_milliseconds = QSpinBox()
+        self.delay_minutes = PlaceholderSpinBox()
+        self.delay_seconds = PlaceholderSpinBox()
+        self.delay_milliseconds = PlaceholderSpinBox()
+        self.random_delay_minutes = PlaceholderSpinBox()
+        self.random_delay_seconds = PlaceholderSpinBox()
+        self.random_delay_milliseconds = PlaceholderSpinBox()
         self.repeat = QSpinBox()
-        self.random_repeat = QSpinBox()
+        self.random_repeat = PlaceholderSpinBox()
         self.comment = QLineEdit()
         self.repeat_label = QLabel("Repeat Count")
         self.repeat_row_widget = self._repeat_row()
@@ -224,6 +267,7 @@ class ActionTableModel(QAbstractTableModel):
     def __init__(self, actions: list[Action] | None = None) -> None:
         super().__init__()
         self.actions = actions or []
+        self.editing_locked = False
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self.actions)
@@ -240,9 +284,11 @@ class ActionTableModel(QAbstractTableModel):
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlags:
         if not index.isValid():
-            return Qt.NoItemFlags
+            return Qt.ItemIsDropEnabled if not self.editing_locked else Qt.NoItemFlags
         flags = Qt.ItemIsSelectable | Qt.ItemIsEnabled
-        if index.column() == 1:
+        if not self.editing_locked:
+            flags |= Qt.ItemIsDragEnabled | Qt.ItemIsDropEnabled
+        if index.column() == 1 and not self.editing_locked:
             flags |= Qt.ItemIsUserCheckable
         return flags
 
@@ -275,7 +321,7 @@ class ActionTableModel(QAbstractTableModel):
         return None
 
     def setData(self, index: QModelIndex, value, role: int = Qt.EditRole) -> bool:
-        if not index.isValid():
+        if not index.isValid() or self.editing_locked:
             return False
         if index.column() == 1 and role == Qt.CheckStateRole:
             self.actions[index.row()].enabled = value == Qt.Checked
@@ -304,6 +350,22 @@ class ActionTableModel(QAbstractTableModel):
         self.actions[source], self.actions[target] = self.actions[target], self.actions[source]
         self.endResetModel()
         return target
+
+    def move_row_to(self, source: int, insertion_row: int) -> int:
+        if source < 0 or source >= len(self.actions):
+            return source
+        insertion_row = max(0, min(insertion_row, len(self.actions)))
+        target = insertion_row - 1 if insertion_row > source else insertion_row
+        if target == source:
+            return source
+        self.beginResetModel()
+        action = self.actions.pop(source)
+        self.actions.insert(target, action)
+        self.endResetModel()
+        return target
+
+    def set_editing_locked(self, locked: bool) -> None:
+        self.editing_locked = locked
 
     def duplicate_row(self, row_index: int) -> int:
         if row_index < 0 or row_index >= len(self.actions):
@@ -340,13 +402,36 @@ class ActionTableModel(QAbstractTableModel):
         self.endResetModel()
 
 
-class EnabledCheckboxDelegate(QStyledItemDelegate):
+class RowHoverDelegate(QStyledItemDelegate):
+    def _row_option(self, option, index: QModelIndex) -> QStyleOptionViewItem:
+        row_option = QStyleOptionViewItem(option)
+        table = self.parent()
+        if isinstance(table, ActionTableView) and index.row() == table.hovered_row:
+            row_option.state |= QStyle.State_MouseOver
+        return row_option
+
+    def paint(self, painter: QPainter, option, index: QModelIndex) -> None:
+        table = self.parent()
+        painter.save()
+        if isinstance(table, ActionTableView) and index.row() == table.dragging_row:
+            painter.setOpacity(0.32)
+        super().paint(painter, self._row_option(option, index), index)
+        painter.restore()
+
+
+class EnabledCheckboxDelegate(RowHoverDelegate):
     def paint(self, painter: QPainter, option, index: QModelIndex) -> None:
         if index.column() != 1:
             super().paint(painter, option, index)
             return
-        checked = index.data(Qt.CheckStateRole) == Qt.Checked
+        option = self._row_option(option, index)
+        table = self.parent()
         painter.save()
+        if isinstance(table, ActionTableView) and index.row() == table.dragging_row:
+            painter.setOpacity(0.32)
+        style = option.widget.style() if option.widget else QApplication.style()
+        style.drawPrimitive(QStyle.PE_PanelItemViewItem, option, painter, option.widget)
+        checked = index.data(Qt.CheckStateRole) == Qt.Checked
         painter.setRenderHint(QPainter.Antialiasing)
         dark = option.palette.window().color().lightness() < 128
         rect = option.rect.adjusted(12, 8, -12, -8)
@@ -363,7 +448,7 @@ class EnabledCheckboxDelegate(QStyledItemDelegate):
         painter.restore()
 
     def editorEvent(self, event, model, option, index: QModelIndex) -> bool:
-        if index.column() != 1:
+        if index.column() != 1 or getattr(model, "editing_locked", False):
             return super().editorEvent(event, model, option, index)
         if event.type() == event.Type.MouseButtonRelease:
             current = index.data(Qt.CheckStateRole)
@@ -372,13 +457,51 @@ class EnabledCheckboxDelegate(QStyledItemDelegate):
         return super().editorEvent(event, model, option, index)
 
 
+class ActionDropIndicator(QWidget):
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.line_y = -1
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.hide()
+
+    def set_target(self, line_y: int) -> None:
+        self.line_y = max(3, min(line_y, self.height() - 4))
+        self.show()
+        self.raise_()
+        self.update()
+
+    def clear_target(self) -> None:
+        self.line_y = -1
+        self.hide()
+
+    def paintEvent(self, event) -> None:
+        if self.line_y < 0:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        accent = self.palette().highlight().color()
+        painter.setPen(QPen(accent, 3))
+        painter.drawLine(8, self.line_y, self.width() - 8, self.line_y)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(accent)
+        painter.drawEllipse(QPoint(8, self.line_y), 4, 4)
+        painter.drawEllipse(QPoint(self.width() - 8, self.line_y), 4, 4)
+
+
 class ActionTableView(QTableView):
     contextRequested = Signal(QPoint)
     editRequested = Signal()
     deleteRequested = Signal()
+    actionDropped = Signal(str, int, str, int)
 
-    def __init__(self, model: ActionTableModel) -> None:
+    def __init__(self, model: ActionTableModel, group_name: str) -> None:
         super().__init__()
+        self.group_name = group_name
+        self.editing_locked = False
+        self.hovered_row = -1
+        self.dragging_row = -1
         self.setObjectName("ActionTableView")
         self.setModel(model)
         self.setSelectionBehavior(QTableView.SelectRows)
@@ -389,6 +512,14 @@ class ActionTableView(QTableView):
         self.verticalHeader().hide()
         self.setMinimumHeight(252)
         self.setFocusPolicy(Qt.StrongFocus)
+        self.setToolTip("Drag an action row to reorder it, or drag it onto a Sequential/Background tab to move it.")
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(False)
+        self.setDragDropMode(QAbstractItemView.DragDrop)
+        self.setDefaultDropAction(Qt.MoveAction)
         self.setWordWrap(False)
         self.horizontalHeader().setStretchLastSection(True)
         self.horizontalHeader().setHighlightSections(False)
@@ -406,12 +537,16 @@ class ActionTableView(QTableView):
         self.setColumnWidth(3, 150)
         self.setColumnWidth(4, 120)
         self.setColumnWidth(5, 68)
+        self.setItemDelegate(RowHoverDelegate(self))
         self.setItemDelegateForColumn(1, EnabledCheckboxDelegate(self))
         self.doubleClicked.connect(lambda _index: self.editRequested.emit())
+        self.drop_indicator = ActionDropIndicator(self.viewport())
+        self.drop_indicator.setGeometry(self.viewport().rect())
         self._apply_rounded_mask()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self.drop_indicator.setGeometry(self.viewport().rect())
         self._apply_rounded_mask()
 
     def _apply_rounded_mask(self) -> None:
@@ -422,14 +557,177 @@ class ActionTableView(QTableView):
         self.setMask(QRegion(path.toFillPolygon().toPolygon()))
 
     def contextMenuEvent(self, event) -> None:
+        if self.editing_locked:
+            return
         self.contextRequested.emit(event.globalPos())
 
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        row = self.indexAt(event.position().toPoint()).row()
+        if row != self.hovered_row:
+            self.hovered_row = row
+            self.viewport().update()
+        self.viewport().setCursor(Qt.OpenHandCursor if row >= 0 and not self.editing_locked else Qt.ArrowCursor)
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        if self.hovered_row != -1:
+            self.hovered_row = -1
+            self.viewport().update()
+        self.viewport().unsetCursor()
+        super().leaveEvent(event)
+
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        if event.key() in {Qt.Key_Delete, Qt.Key_Backspace}:
+        if not self.editing_locked and event.key() in {Qt.Key_Delete, Qt.Key_Backspace}:
             self.deleteRequested.emit()
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def set_editing_locked(self, locked: bool) -> None:
+        self.editing_locked = locked
+        self.setDragEnabled(not locked)
+        self.setAcceptDrops(not locked)
+
+    def startDrag(self, supported_actions) -> None:
+        if self.editing_locked:
+            return
+        row = self.currentIndex().row()
+        if row < 0:
+            return
+        drag = QDrag(self)
+        drag.setMimeData(encode_action_drag(self.group_name, row))
+        row_rect = self.visualRect(self.model().index(row, 0))
+        row_rect.setRight(self.viewport().width())
+        source_pixmap = self.viewport().grab(row_rect)
+        pixmap = source_pixmap.copy()
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setOpacity(0.88)
+        painter.drawPixmap(0, 0, source_pixmap)
+        painter.setOpacity(1.0)
+        painter.setPen(QPen(self.palette().highlight().color(), 2))
+        painter.drawRoundedRect(pixmap.rect().adjusted(1, 1, -2, -2), 7, 7)
+        painter.end()
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(QPoint(min(30, pixmap.width() // 2), pixmap.height() // 2))
+        self.dragging_row = row
+        self.viewport().update()
+        self.viewport().setCursor(Qt.ClosedHandCursor)
+        drag.exec(Qt.MoveAction)
+        self.dragging_row = -1
+        self.drop_indicator.clear_target()
+        self.viewport().update()
+        self.viewport().unsetCursor()
+
+    def dragEnterEvent(self, event) -> None:
+        if not self.editing_locked and decode_action_drag(event.mimeData()):
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dragMoveEvent(self, event) -> None:
+        if not self.editing_locked and decode_action_drag(event.mimeData()):
+            _insertion_row, line_y = self._drop_location(event.position().toPoint())
+            self.drop_indicator.set_target(line_y)
+            event.acceptProposedAction()
+            return
+        self.drop_indicator.clear_target()
+        event.ignore()
+
+    def dragLeaveEvent(self, event) -> None:
+        self.drop_indicator.clear_target()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        payload = decode_action_drag(event.mimeData())
+        if self.editing_locked or payload is None:
+            self.drop_indicator.clear_target()
+            event.ignore()
+            return
+        source_group, source_row = payload
+        insertion_row, _line_y = self._drop_location(event.position().toPoint())
+        self.drop_indicator.clear_target()
+        self.actionDropped.emit(source_group, source_row, self.group_name, insertion_row)
+        event.acceptProposedAction()
+
+    def _drop_location(self, position: QPoint) -> tuple[int, int]:
+        index = self.indexAt(position)
+        if index.isValid():
+            rect = self.visualRect(index)
+            after = position.y() > rect.center().y()
+            return index.row() + (1 if after else 0), rect.bottom() + 1 if after else rect.top()
+        row_count = self.model().rowCount()
+        if row_count:
+            last_rect = self.visualRect(self.model().index(row_count - 1, 0))
+            return row_count, last_rect.bottom() + 1
+        return 0, 4
+
+
+class ActionTabBar(QTabBar):
+    actionDropped = Signal(str, int, str)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.editing_locked = False
+        self.drop_target_index = -1
+        self.setAcceptDrops(True)
+        self.setToolTip("Drop an action onto a tab to move it to that action queue.")
+
+    def set_editing_locked(self, locked: bool) -> None:
+        self.editing_locked = locked
+        self.setAcceptDrops(not locked)
+
+    def dragEnterEvent(self, event) -> None:
+        if not self.editing_locked and decode_action_drag(event.mimeData()):
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dragMoveEvent(self, event) -> None:
+        tab_index = self.tabAt(event.position().toPoint())
+        if not self.editing_locked and tab_index >= 0 and decode_action_drag(event.mimeData()):
+            if tab_index != self.drop_target_index:
+                self.drop_target_index = tab_index
+                self.update()
+            event.acceptProposedAction()
+            return
+        self._clear_drop_target()
+        event.ignore()
+
+    def dragLeaveEvent(self, event) -> None:
+        self._clear_drop_target()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        payload = decode_action_drag(event.mimeData())
+        tab_index = self.tabAt(event.position().toPoint())
+        if self.editing_locked or payload is None or tab_index < 0:
+            self._clear_drop_target()
+            event.ignore()
+            return
+        source_group, source_row = payload
+        target_group = "Sequential" if tab_index == 0 else "Background"
+        self._clear_drop_target()
+        self.actionDropped.emit(source_group, source_row, target_group)
+        event.acceptProposedAction()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self.drop_target_index < 0:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        color = self.palette().highlight().color()
+        fill = QColor(color)
+        fill.setAlpha(42)
+        painter.setBrush(fill)
+        painter.setPen(QPen(color, 2))
+        painter.drawRoundedRect(self.tabRect(self.drop_target_index).adjusted(2, 2, -2, -2), 8, 8)
+
+    def _clear_drop_target(self) -> None:
+        if self.drop_target_index != -1:
+            self.drop_target_index = -1
+            self.update()
 
 
 class RoundedTableFrame(QWidget):
@@ -526,8 +824,9 @@ class QueuePane(QWidget):
         self.card_color = QColor("#10192c")
         self.border_color = QColor("#233149")
         self.repeat_input = QLineEdit("1")
-        self.random_repeat_input = QLineEdit("0")
-        self.table = ActionTableView(model)
+        self.random_repeat_input = QLineEdit()
+        self.random_repeat_input.setPlaceholderText("0")
+        self.table = ActionTableView(model, group_name)
         self.table_frame = RoundedTableFrame(self.table)
         self.setMinimumHeight(360)
         self.icon_buttons: list[tuple[QPushButton, str, int]] = []
@@ -543,10 +842,10 @@ class QueuePane(QWidget):
         toolbar.addWidget(title)
         toolbar.addStretch(1)
 
-        add_button = QPushButton("Add Action")
-        self._set_icon(add_button, "add")
-        add_button.clicked.connect(lambda: self.addRequested.emit(self.group_name))
-        toolbar.addWidget(add_button)
+        self.add_button = QPushButton("Add Action")
+        self._set_icon(self.add_button, "add")
+        self.add_button.clicked.connect(lambda: self.addRequested.emit(self.group_name))
+        toolbar.addWidget(self.add_button)
 
         self.up_button = QPushButton()
         self._set_icon(self.up_button, "up")
@@ -614,6 +913,18 @@ class QueuePane(QWidget):
         row_count = self.model.rowCount()
         self.up_button.setEnabled(selected_row > 0)
         self.down_button.setEnabled(0 <= selected_row < row_count - 1)
+
+    def set_editing_locked(self, locked: bool) -> None:
+        self.model.set_editing_locked(locked)
+        self.table.set_editing_locked(locked)
+        self.table.viewport().update()
+        self.add_button.setEnabled(not locked)
+        self.more_button.setEnabled(not locked)
+        self.repeat_input.setEnabled(not locked)
+        self.random_repeat_input.setEnabled(not locked)
+        if locked:
+            self.up_button.setEnabled(False)
+            self.down_button.setEnabled(False)
 
 
 class KeyCaptureLineEdit(QLineEdit):
@@ -796,6 +1107,7 @@ def choose_screen_area(owner: QWidget, initial_area: ScreenArea | None = None, a
 
 
 __all__ = [
+    "ActionTabBar",
     "ActionTableModel",
     "ActionTableView",
     "AreaOverlay",
@@ -805,6 +1117,8 @@ __all__ = [
     "make_help_button",
     "make_help_label",
     "QueuePane",
+    "PlaceholderSpinBox",
+    "PlaceholderDoubleSpinBox",
     "SidebarItem",
     "choose_screen_area",
     "compact_time_label",

@@ -41,16 +41,25 @@ python -m pip install -r docs/requirements.txt
 
 ## Windows Installer
 
-Install [Inno Setup 6](https://jrsoftware.org/isdl.php), then build the Windows
-installer from source with:
+Install [Inno Setup 6](https://jrsoftware.org/isdl.php), merge the release into
+a clean `main` branch, then double-click:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File packaging/build_release.ps1
+```text
+Create Update.cmd
 ```
 
-The tested PyInstaller application is staged under `dist/Anz Clicker/`, and the
-single distributable installer is created under `release/`. Attach the setup
-EXE to the matching GitHub Release.
+The launcher keeps its window open so the completed installer path or any
+errors remain visible. The equivalent PowerShell command is:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/create_release.ps1
+```
+
+Enter the new version when prompted. The script updates the application
+version and changelog, runs tests, packages the application, and creates the
+installer. The tested PyInstaller application is staged under
+`dist/Anz Clicker/`, and the single distributable installer is created under
+`release/`. Attach the setup EXE to the matching GitHub Release.
 
 Installed program files live under `Program Files`. User-created scripts live
 in `%LOCALAPPDATA%\Anz Clicker\scripts`; settings, custom actions, captures, and
