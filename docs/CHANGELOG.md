@@ -4,6 +4,8 @@ All notable Anz Clicker changes are grouped by version. The current source versi
 
 ## Unreleased
 
+## 1.4.1 - 2026-06-26
+
 - Added a more robust updater relaunch watcher that reopens Anz Clicker after the installer finishes instead of relying on installer restart flags.
 - Made action-queue drag tooltips row-specific so they only appear when hovering actual actions.
 
