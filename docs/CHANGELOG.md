@@ -4,6 +4,7 @@ All notable Anz Clicker changes are grouped by version. The current source versi
 
 ## Unreleased
 
+- Added release-build preflight detection for running Anz Clicker processes and retry handling for transient Windows file locks.
 - Added a root-level `Create Update.cmd` launcher for starting the interactive release builder by double-clicking.
 - Added an interactive release creator that validates a clean `main` branch, updates the version and changelog, runs the canonical build, and restores release metadata automatically if packaging fails.
 - Added a Settings update checker backed by the latest published GitHub release.
