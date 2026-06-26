@@ -57,6 +57,7 @@ from .paths import (
     presets_path,
     storage_root,
     settings_path,
+    update_relaunch_marker_path,
 )
 from .theme import build_stylesheet
 from .updater import (
@@ -135,6 +136,7 @@ class MainWindow(QMainWindow):
         self._update_check_in_progress = False
         self._update_dialog: SettingsDialog | None = None
         self._pending_update_release: ReleaseInfo | None = None
+        self._active_update_version = ""
         self._update_progress_dialog: QProgressDialog | None = None
         self._update_cancel_event: threading.Event | None = None
         self._open_overflow_group: str | None = None
@@ -170,6 +172,7 @@ class MainWindow(QMainWindow):
         self._update_window_title()
         self.update_action_button_states()
         self._restore_window_geometry()
+        QTimer.singleShot(800, self._show_update_relaunch_message)
         self.start_shortcut = QShortcut(self)
         self.start_shortcut.activated.connect(self.toggle_run)
         self.pause_shortcut = QShortcut(self)
@@ -1390,6 +1393,7 @@ class MainWindow(QMainWindow):
                 return
             self.runner.stop()
 
+        self._active_update_version = release.version
         self._update_cancel_event = threading.Event()
         progress = QProgressDialog(
             f"Downloading Anz Clicker {release.version}...",
@@ -1441,18 +1445,43 @@ class MainWindow(QMainWindow):
             progress.close()
             progress.deleteLater()
         if error:
+            self._active_update_version = ""
             QMessageBox.warning(self, "Update Download Failed", error)
             return
         if installer is None:
+            self._active_update_version = ""
             return
         try:
             self._save_window_geometry_setting()
-            launch_installer(Path(installer))
+            launch_installer(Path(installer), version=self._active_update_version)
         except UpdateError as exc:
+            self._active_update_version = ""
             QMessageBox.warning(self, "Update Could Not Start", str(exc))
             return
         if hasattr(self, "status_text"):
             self.status_text.setText("Installing update...")
+
+    def _show_update_relaunch_message(self) -> None:
+        marker_path = update_relaunch_marker_path()
+        if not marker_path.is_file():
+            return
+        version = APP_VERSION
+        try:
+            payload = json.loads(marker_path.read_text(encoding="utf-8"))
+            marker_version = str(payload.get("version", "")).strip()
+            if marker_version:
+                version = marker_version
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+        try:
+            marker_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        QMessageBox.information(
+            self,
+            "Update Complete",
+            f"Anz Clicker has been updated to version {version}.",
+        )
 
     def _save_app_settings_silent(self) -> bool:
         try:

@@ -12,6 +12,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from .paths import update_relaunch_marker_path
+
 
 GITHUB_OWNER = "Anz-Clicker"
 GITHUB_REPOSITORY = "Anz-Clicker"
@@ -168,13 +170,22 @@ def installer_command(installer_path: Path) -> list[str]:
         "/CLOSEAPPLICATIONS",
         "/RESTARTAPPLICATIONS",
         "/NORESTART",
+        "/ANZRESTARTAPP",
     ]
 
 
-def launch_installer(installer_path: Path) -> None:
+def write_relaunch_marker(version: str) -> None:
+    marker_path = update_relaunch_marker_path()
+    marker_path.parent.mkdir(parents=True, exist_ok=True)
+    marker_path.write_text(json.dumps({"version": version}, indent=2), encoding="utf-8")
+
+
+def launch_installer(installer_path: Path, version: str = "") -> None:
     if not installer_path.is_file():
         raise UpdateError("The downloaded installer could not be found.")
     try:
+        if version:
+            write_relaunch_marker(version)
         subprocess.Popen(installer_command(installer_path), close_fds=True)
     except OSError as exc:
         raise UpdateError(f"Could not start the update installer: {exc}") from exc
@@ -210,4 +221,5 @@ __all__ = [
     "launch_installer",
     "parse_version",
     "release_from_payload",
+    "write_relaunch_marker",
 ]
