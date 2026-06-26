@@ -4,6 +4,8 @@ All notable Anz Clicker changes are grouped by version. The current source versi
 
 ## Unreleased
 
+## 1.3.3 - 2026-06-26
+
 - Added optional post-build release metadata commit and push automation to `create_release.ps1`.
 
 ## 1.3.2 - 2026-06-26
