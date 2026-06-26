@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 from typing import Callable
 from urllib.error import HTTPError, URLError
@@ -168,10 +169,58 @@ def installer_command(installer_path: Path) -> list[str]:
         str(installer_path),
         "/SILENT",
         "/CLOSEAPPLICATIONS",
-        "/RESTARTAPPLICATIONS",
         "/NORESTART",
         "/ANZRESTARTAPP",
     ]
+
+
+def installed_app_path() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable)
+    return Path(sys.argv[0]).resolve()
+
+
+def relaunch_watcher_command(installer_pid: int, app_path: Path) -> list[str]:
+    # Run outside Anz Clicker so the app can be closed and replaced during install.
+    script = (
+        f"$installerPid = {int(installer_pid)}; "
+        f"$appPath = {json.dumps(str(app_path))}; "
+        "try { Wait-Process -Id $installerPid -Timeout 1800 -ErrorAction SilentlyContinue } catch { }; "
+        "Start-Sleep -Milliseconds 900; "
+        "for ($i = 0; $i -lt 90; $i++) { "
+        "if (Test-Path -LiteralPath $appPath) { "
+        "try { Start-Process -FilePath $appPath; exit 0 } catch { } "
+        "} "
+        "Start-Sleep -Seconds 1 "
+        "}; "
+        "exit 1"
+    )
+    return [
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-WindowStyle",
+        "Hidden",
+        "-Command",
+        script,
+    ]
+
+
+def launch_relaunch_watcher(installer_process: subprocess.Popen, app_path: Path) -> None:
+    startupinfo = None
+    creationflags = 0
+    if sys.platform.startswith("win"):
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess.Popen(
+        relaunch_watcher_command(installer_process.pid, app_path),
+        close_fds=True,
+        startupinfo=startupinfo,
+        creationflags=creationflags,
+    )
 
 
 def write_relaunch_marker(version: str) -> None:
@@ -186,7 +235,9 @@ def launch_installer(installer_path: Path, version: str = "") -> None:
     try:
         if version:
             write_relaunch_marker(version)
-        subprocess.Popen(installer_command(installer_path), close_fds=True)
+        app_path = installed_app_path()
+        installer_process = subprocess.Popen(installer_command(installer_path), close_fds=True)
+        launch_relaunch_watcher(installer_process, app_path)
     except OSError as exc:
         raise UpdateError(f"Could not start the update installer: {exc}") from exc
 
@@ -217,9 +268,12 @@ __all__ = [
     "download_installer",
     "fetch_latest_release",
     "installer_command",
+    "installed_app_path",
     "is_newer_version",
     "launch_installer",
+    "launch_relaunch_watcher",
     "parse_version",
     "release_from_payload",
+    "relaunch_watcher_command",
     "write_relaunch_marker",
 ]

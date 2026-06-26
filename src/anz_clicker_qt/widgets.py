@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QEvent, QItemSelectionModel, QMimeData, QModelIndex, QPoint, QRect, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QDrag, QIcon, QKeyEvent, QMouseEvent, QPainter, QPainterPath, QPen, QRegion
+from PySide6.QtGui import QColor, QDrag, QHelpEvent, QIcon, QKeyEvent, QMouseEvent, QPainter, QPainterPath, QPen, QRegion
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate,
     QTabBar,
     QTableView,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -595,7 +596,8 @@ class ActionTableView(QTableView):
         self.verticalHeader().hide()
         self.setMinimumHeight(252)
         self.setFocusPolicy(Qt.StrongFocus)
-        self.setToolTip("Drag an action row to reorder it, or drag it onto a Sequential/Background tab to move it.")
+        self.setToolTip("")
+        self.viewport().setToolTip("")
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
         self.setDragEnabled(True)
@@ -643,6 +645,21 @@ class ActionTableView(QTableView):
         if self.editing_locked:
             return
         self.contextRequested.emit(event.globalPos())
+
+    def viewportEvent(self, event) -> bool:
+        if event.type() == QEvent.ToolTip and isinstance(event, QHelpEvent):
+            index = self.indexAt(event.pos())
+            if index.isValid() and not self.editing_locked:
+                QToolTip.showText(
+                    event.globalPos(),
+                    "Drag selected action rows to reorder them, or drag them onto a Sequential/Background tab to move them.",
+                    self.viewport(),
+                    self.visualRect(index),
+                )
+            else:
+                QToolTip.hideText()
+            return True
+        return super().viewportEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         row = self.indexAt(event.position().toPoint()).row()
