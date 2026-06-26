@@ -4,6 +4,8 @@ All notable Anz Clicker changes are grouped by version. The current source versi
 
 ## Unreleased
 
+- Fixed update-check installer detection so GitHub release assets with dots, dashes, or underscores in the installer filename are recognized.
+
 ## 1.3.1 - 2026-06-26
 
 - Added a root-level `Create Update.cmd` launcher for starting the interactive release builder by double-clicking.

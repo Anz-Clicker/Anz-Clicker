@@ -77,7 +77,7 @@ def release_from_payload(payload: dict) -> ReleaseInfo:
     installers = [
         asset
         for asset in installers
-        if "anz clicker setup" in str(asset.get("name", "")).lower()
+        if _normalized_asset_name(str(asset.get("name", ""))).find("anzclickersetup") >= 0
     ]
     if not installers:
         raise UpdateError(
@@ -184,6 +184,10 @@ def _validate_download_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme.lower() != "https" or parsed.hostname not in ALLOWED_DOWNLOAD_HOSTS:
         raise UpdateError("GitHub returned an unsafe installer download address.")
+
+
+def _normalized_asset_name(name: str) -> str:
+    return "".join(character for character in name.lower() if character.isalnum())
 
 
 def _verify_digest(expected: str, actual_sha256: str) -> None:

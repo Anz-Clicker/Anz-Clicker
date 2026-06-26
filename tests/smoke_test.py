@@ -93,6 +93,17 @@ def test_update_release_parsing_and_version_comparison() -> None:
     assert "/RESTARTAPPLICATIONS" in command
     assert "/NORESTART" in command
 
+    dotted_payload = {
+        "tag_name": "v1.4.0",
+        "assets": [
+            {
+                "name": "Anz.Clicker.Setup.v1.4.0.exe",
+                "browser_download_url": "https://github.com/Anz-Clicker/Anz-Clicker/releases/download/v1.4.0/Anz.Clicker.Setup.v1.4.0.exe",
+            }
+        ],
+    }
+    assert release_from_payload(dotted_payload).installer_name == "Anz.Clicker.Setup.v1.4.0.exe"
+
     try:
         release_from_payload(
             {
