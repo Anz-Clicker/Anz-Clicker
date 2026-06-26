@@ -167,7 +167,7 @@ Animated movement duration is controlled globally by Settings, not by an action-
 - Every published release intended for automatic updates must use a semantic tag such as `v1.4.0` and include an installer asset named `Anz Clicker Setup v1.4.0.exe`.
 - Update downloads use HTTPS and verify GitHub's SHA-256 asset digest when one is available.
 - The updater must run the standard unsaved-script guard before downloading an installer.
-- The updater launches Inno Setup with `/SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NORESTART` so the installed app is replaced and reopened while `%LOCALAPPDATA%` user data remains untouched.
+- The updater launches Inno Setup with `/SILENT /CLOSEAPPLICATIONS /NORESTART` and starts a hidden relaunch watcher. The watcher waits for the installer to finish, then opens the updated `Anz Clicker.exe`. This is more reliable than depending on installer-managed app restart behavior while the running executable is being replaced.
 
 ## Icons And Theme
 
