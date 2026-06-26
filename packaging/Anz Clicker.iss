@@ -52,3 +52,10 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: deskto
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AppExeName}"; Flags: nowait skipifdoesntexist; Check: ShouldRestartAfterUpdate
+
+[Code]
+function ShouldRestartAfterUpdate(): Boolean;
+begin
+  Result := Pos('/ANZRESTARTAPP', Uppercase(GetCmdTail)) > 0;
+end;

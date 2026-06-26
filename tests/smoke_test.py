@@ -27,6 +27,7 @@ from anz_clicker_qt.updater import (
     is_newer_version,
     parse_version,
     release_from_payload,
+    write_relaunch_marker,
 )
 from anz_clicker_qt.widgets import ActionTableModel, decode_action_drag, encode_action_drag, target_label
 
@@ -92,6 +93,7 @@ def test_update_release_parsing_and_version_comparison() -> None:
     assert "/CLOSEAPPLICATIONS" in command
     assert "/RESTARTAPPLICATIONS" in command
     assert "/NORESTART" in command
+    assert "/ANZRESTARTAPP" in command
 
     dotted_payload = {
         "tag_name": "v1.4.0",
@@ -120,6 +122,20 @@ def test_update_release_parsing_and_version_comparison() -> None:
         assert "does not include an Anz Clicker installer" in str(exc)
     else:
         raise AssertionError("An unrelated executable was accepted as the updater installer")
+
+
+def test_update_relaunch_marker_round_trip() -> None:
+    import anz_clicker_qt.updater as updater
+
+    marker = TMP_ROOT / "marker-data" / "user-data" / "update_relaunch.json"
+    original_marker_path = updater.update_relaunch_marker_path
+    try:
+        updater.update_relaunch_marker_path = lambda: marker
+        write_relaunch_marker("1.4.0")
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+        assert payload["version"] == "1.4.0"
+    finally:
+        updater.update_relaunch_marker_path = original_marker_path
 
 
 def test_legacy_user_data_migration() -> None:
@@ -411,6 +427,7 @@ def main() -> int:
     tests = [
         test_settings_round_trip,
         test_update_release_parsing_and_version_comparison,
+        test_update_relaunch_marker_round_trip,
         test_legacy_user_data_migration,
         test_frozen_storage_root_uses_user_profile_override,
         test_enhanced_mouse_path_is_interruptible_and_exact,

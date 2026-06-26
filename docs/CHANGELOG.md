@@ -4,6 +4,8 @@ All notable Anz Clicker changes are grouped by version. The current source versi
 
 ## Unreleased
 
+- Added explicit updater relaunch handling so update installs reopen Anz Clicker and show a one-time success confirmation.
+
 ## 1.3.3 - 2026-06-26
 
 - Added optional post-build release metadata commit and push automation to `create_release.ps1`.

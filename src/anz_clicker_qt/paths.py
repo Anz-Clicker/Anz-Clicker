@@ -50,6 +50,10 @@ def presets_path() -> Path:
     return user_data_dir() / "anz_clicker_presets.json"
 
 
+def update_relaunch_marker_path() -> Path:
+    return user_data_dir() / "update_relaunch.json"
+
+
 def ensure_user_directories() -> None:
     user_data_dir().mkdir(parents=True, exist_ok=True)
     scripts_dir().mkdir(parents=True, exist_ok=True)
