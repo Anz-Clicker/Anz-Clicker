@@ -247,8 +247,10 @@ The release creator prompts for a semantic version, requires that it is newer
 than the current version, updates `version.py`, moves the current Unreleased
 changelog notes into a dated version section, and invokes
 `packaging/build_release.ps1`. If testing or packaging fails, it restores the
-original version and changelog. Use `build_release.ps1` directly only when
-those release metadata changes have already been prepared.
+original version and changelog. After a successful build, it can commit
+`version.py` and `CHANGELOG.md` and push `main`; use `-CommitAndPush` to skip
+that prompt or `-NoCommitAndPush` to opt out explicitly. Use `build_release.ps1`
+directly only when those release metadata changes have already been prepared.
 
 Do not commit generated `dist/`, `release/`, or `build/` output. Attach the
 generated setup EXE to GitHub Releases. Installed program files belong under
