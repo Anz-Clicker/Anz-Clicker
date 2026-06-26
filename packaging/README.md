@@ -13,12 +13,25 @@ powershell -ExecutionPolicy Bypass -File packaging/create_release.ps1
 The script prompts for the new semantic version, updates `version.py`, rolls
 the Unreleased changelog entries into the new version, and invokes the
 canonical release build. If the build fails, the version and changelog edits
-are restored automatically.
+are restored automatically. After a successful build, it can commit the release
+metadata and push `main` for you.
 
 For automation, provide the version directly:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging/create_release.ps1 -Version 1.4.0
+```
+
+To skip the post-build prompt and automatically commit/push release metadata:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/create_release.ps1 -Version 1.4.0 -CommitAndPush
+```
+
+To explicitly build without committing:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/create_release.ps1 -Version 1.4.0 -NoCommitAndPush
 ```
 
 The low-level build command remains available when the version and changelog

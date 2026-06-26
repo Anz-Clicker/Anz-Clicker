@@ -4,6 +4,8 @@ All notable Anz Clicker changes are grouped by version. The current source versi
 
 ## Unreleased
 
+- Added optional post-build release metadata commit and push automation to `create_release.ps1`.
+
 ## 1.3.2 - 2026-06-26
 
 - Fixed update-check installer detection so GitHub release assets with dots, dashes, or underscores in the installer filename are recognized.

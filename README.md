@@ -56,8 +56,9 @@ powershell -ExecutionPolicy Bypass -File packaging/create_release.ps1
 ```
 
 Enter the new version when prompted. The script updates the application
-version and changelog, runs tests, packages the application, and creates the
-installer. The tested PyInstaller application is staged under
+version and changelog, runs tests, packages the application, creates the
+installer, and can commit/push the release metadata for you. The tested
+PyInstaller application is staged under
 `dist/Anz Clicker/`, and the single distributable installer is created under
 `release/`. Attach the setup EXE to the matching GitHub Release.
 
