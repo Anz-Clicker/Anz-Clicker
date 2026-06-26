@@ -4,6 +4,8 @@ All notable Anz Clicker changes are grouped by version. The current source versi
 
 ## Unreleased
 
+## 1.4.0 - 2026-06-26
+
 - Added explicit updater relaunch handling so update installs reopen Anz Clicker and show a one-time success confirmation.
 - Added a Start Menu shortcut option to the installer.
 - Added multi-action selection in queue panes, including bulk delete, duplicate, move, transfer, drag-and-drop, and Ctrl+A selection.
