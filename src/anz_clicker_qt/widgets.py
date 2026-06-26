@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QEvent, QMimeData, QModelIndex, QPoint, QRect, QSize, Qt, Signal
+from PySide6.QtCore import QCoreApplication, QEvent, QItemSelectionModel, QMimeData, QModelIndex, QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QDrag, QIcon, QKeyEvent, QMouseEvent, QPainter, QPainterPath, QPen, QRegion
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
@@ -37,18 +37,21 @@ PICTURE_ACTIONS = {ActionType.WAIT_FOR_PICTURE.value, ActionType.AUTO_PICTURE_CL
 ACTION_DRAG_MIME = "application/x-anz-clicker-action-row"
 
 
-def encode_action_drag(group_name: str, row: int) -> QMimeData:
+def encode_action_drag(group_name: str, rows: int | list[int]) -> QMimeData:
     mime = QMimeData()
-    mime.setData(ACTION_DRAG_MIME, f"{group_name}\n{row}".encode("utf-8"))
+    row_values = [rows] if isinstance(rows, int) else rows
+    row_text = ",".join(str(row) for row in sorted(set(row_values)))
+    mime.setData(ACTION_DRAG_MIME, f"{group_name}\n{row_text}".encode("utf-8"))
     return mime
 
 
-def decode_action_drag(mime: QMimeData) -> tuple[str, int] | None:
+def decode_action_drag(mime: QMimeData) -> tuple[str, list[int]] | None:
     if not mime.hasFormat(ACTION_DRAG_MIME):
         return None
     try:
-        group_name, row = bytes(mime.data(ACTION_DRAG_MIME)).decode("utf-8").splitlines()
-        return group_name, int(row)
+        group_name, row_text = bytes(mime.data(ACTION_DRAG_MIME)).decode("utf-8").splitlines()
+        rows = [int(value) for value in row_text.split(",") if value.strip()]
+        return group_name, sorted(set(rows))
     except (TypeError, ValueError):
         return None
 
@@ -342,6 +345,17 @@ class ActionTableModel(QAbstractTableModel):
         self.actions.pop(row_index)
         self.endRemoveRows()
 
+    def remove_rows(self, rows: list[int]) -> int:
+        valid_rows = sorted({row for row in rows if 0 <= row < len(self.actions)}, reverse=True)
+        if not valid_rows:
+            return -1
+        nearest = min(valid_rows)
+        self.beginResetModel()
+        for row in valid_rows:
+            self.actions.pop(row)
+        self.endResetModel()
+        return min(nearest, len(self.actions) - 1)
+
     def move_row(self, source: int, offset: int) -> int:
         target = source + offset
         if source < 0 or source >= len(self.actions) or target < 0 or target >= len(self.actions):
@@ -350,6 +364,27 @@ class ActionTableModel(QAbstractTableModel):
         self.actions[source], self.actions[target] = self.actions[target], self.actions[source]
         self.endResetModel()
         return target
+
+    def move_rows(self, rows: list[int], offset: int) -> list[int]:
+        selected = sorted({row for row in rows if 0 <= row < len(self.actions)})
+        if not selected or offset == 0:
+            return selected
+        selected_set = set(selected)
+        self.beginResetModel()
+        if offset < 0:
+            for row in selected:
+                if row > 0 and row - 1 not in selected_set:
+                    self.actions[row - 1], self.actions[row] = self.actions[row], self.actions[row - 1]
+                    selected_set.remove(row)
+                    selected_set.add(row - 1)
+        else:
+            for row in reversed(selected):
+                if row < len(self.actions) - 1 and row + 1 not in selected_set:
+                    self.actions[row + 1], self.actions[row] = self.actions[row], self.actions[row + 1]
+                    selected_set.remove(row)
+                    selected_set.add(row + 1)
+        self.endResetModel()
+        return sorted(selected_set)
 
     def move_row_to(self, source: int, insertion_row: int) -> int:
         if source < 0 or source >= len(self.actions):
@@ -364,6 +399,21 @@ class ActionTableModel(QAbstractTableModel):
         self.endResetModel()
         return target
 
+    def move_rows_to(self, rows: list[int], insertion_row: int) -> list[int]:
+        selected = sorted({row for row in rows if 0 <= row < len(self.actions)})
+        if not selected:
+            return []
+        insertion_row = max(0, min(insertion_row, len(self.actions)))
+        selected_actions = [self.actions[row] for row in selected]
+        selected_set = set(selected)
+        remaining = [action for index, action in enumerate(self.actions) if index not in selected_set]
+        adjusted_insertion = insertion_row - sum(1 for row in selected if row < insertion_row)
+        adjusted_insertion = max(0, min(adjusted_insertion, len(remaining)))
+        self.beginResetModel()
+        self.actions = remaining[:adjusted_insertion] + selected_actions + remaining[adjusted_insertion:]
+        self.endResetModel()
+        return list(range(adjusted_insertion, adjusted_insertion + len(selected_actions)))
+
     def set_editing_locked(self, locked: bool) -> None:
         self.editing_locked = locked
 
@@ -376,6 +426,18 @@ class ActionTableModel(QAbstractTableModel):
         self.endInsertRows()
         return insert_at
 
+    def duplicate_rows(self, rows: list[int]) -> list[int]:
+        selected = sorted({row for row in rows if 0 <= row < len(self.actions)})
+        if not selected:
+            return []
+        duplicates = [Action.from_dict(self.actions[row].to_dict()) for row in selected]
+        insert_at = selected[-1] + 1
+        self.beginResetModel()
+        for offset, action in enumerate(duplicates):
+            self.actions.insert(insert_at + offset, action)
+        self.endResetModel()
+        return list(range(insert_at, insert_at + len(duplicates)))
+
     def take_row(self, row_index: int) -> Action | None:
         if row_index < 0 or row_index >= len(self.actions):
             return None
@@ -384,11 +446,32 @@ class ActionTableModel(QAbstractTableModel):
         self.endRemoveRows()
         return row
 
+    def take_rows(self, rows: list[int]) -> list[Action]:
+        selected = sorted({row for row in rows if 0 <= row < len(self.actions)})
+        if not selected:
+            return []
+        selected_actions = [self.actions[row] for row in selected]
+        selected_set = set(selected)
+        self.beginResetModel()
+        self.actions = [action for index, action in enumerate(self.actions) if index not in selected_set]
+        self.endResetModel()
+        return selected_actions
+
     def insert_existing_row(self, row_index: int, row: Action) -> None:
         row_index = max(0, min(row_index, len(self.actions)))
         self.beginInsertRows(QModelIndex(), row_index, row_index)
         self.actions.insert(row_index, row)
         self.endInsertRows()
+
+    def insert_existing_rows(self, row_index: int, rows: list[Action]) -> list[int]:
+        if not rows:
+            return []
+        row_index = max(0, min(row_index, len(self.actions)))
+        self.beginResetModel()
+        for offset, row in enumerate(rows):
+            self.actions.insert(row_index + offset, row)
+        self.endResetModel()
+        return list(range(row_index, row_index + len(rows)))
 
     def replace_row(self, row_index: int, action: Action) -> None:
         if row_index < 0 or row_index >= len(self.actions):
@@ -494,7 +577,7 @@ class ActionTableView(QTableView):
     contextRequested = Signal(QPoint)
     editRequested = Signal()
     deleteRequested = Signal()
-    actionDropped = Signal(str, int, str, int)
+    actionDropped = Signal(str, object, str, int)
 
     def __init__(self, model: ActionTableModel, group_name: str) -> None:
         super().__init__()
@@ -505,7 +588,7 @@ class ActionTableView(QTableView):
         self.setObjectName("ActionTableView")
         self.setModel(model)
         self.setSelectionBehavior(QTableView.SelectRows)
-        self.setSelectionMode(QTableView.SingleSelection)
+        self.setSelectionMode(QTableView.ExtendedSelection)
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.setShowGrid(True)
         self.setAlternatingRowColors(False)
@@ -581,6 +664,10 @@ class ActionTableView(QTableView):
             self.deleteRequested.emit()
             event.accept()
             return
+        if event.matches(QKeySequence.SelectAll):
+            self.selectAll()
+            event.accept()
+            return
         super().keyPressEvent(event)
 
     def set_editing_locked(self, locked: bool) -> None:
@@ -594,8 +681,11 @@ class ActionTableView(QTableView):
         row = self.currentIndex().row()
         if row < 0:
             return
+        rows = self.selected_rows()
+        if row not in rows:
+            rows = [row]
         drag = QDrag(self)
-        drag.setMimeData(encode_action_drag(self.group_name, row))
+        drag.setMimeData(encode_action_drag(self.group_name, rows))
         row_rect = self.visualRect(self.model().index(row, 0))
         row_rect.setRight(self.viewport().width())
         source_pixmap = self.viewport().grab(row_rect)
@@ -644,10 +734,10 @@ class ActionTableView(QTableView):
             self.drop_indicator.clear_target()
             event.ignore()
             return
-        source_group, source_row = payload
+        source_group, source_rows = payload
         insertion_row, _line_y = self._drop_location(event.position().toPoint())
         self.drop_indicator.clear_target()
-        self.actionDropped.emit(source_group, source_row, self.group_name, insertion_row)
+        self.actionDropped.emit(source_group, source_rows, self.group_name, insertion_row)
         event.acceptProposedAction()
 
     def _drop_location(self, position: QPoint) -> tuple[int, int]:
@@ -662,9 +752,31 @@ class ActionTableView(QTableView):
             return row_count, last_rect.bottom() + 1
         return 0, 4
 
+    def selected_rows(self) -> list[int]:
+        selection = self.selectionModel()
+        if selection is None:
+            return []
+        return sorted({index.row() for index in selection.selectedRows() if index.isValid()})
+
+    def select_rows(self, rows: list[int]) -> None:
+        self.clearSelection()
+        model = self.model()
+        selection = self.selectionModel()
+        if model is None or selection is None:
+            return
+        first = next((row for row in rows if 0 <= row < model.rowCount()), -1)
+        if first >= 0:
+            self.setCurrentIndex(model.index(first, 0))
+        for row in rows:
+            if 0 <= row < model.rowCount():
+                selection.select(
+                    model.index(row, 0),
+                    QItemSelectionModel.Select | QItemSelectionModel.Rows,
+                )
+
 
 class ActionTabBar(QTabBar):
-    actionDropped = Signal(str, int, str)
+    actionDropped = Signal(str, object, str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -705,10 +817,10 @@ class ActionTabBar(QTabBar):
             self._clear_drop_target()
             event.ignore()
             return
-        source_group, source_row = payload
+        source_group, source_rows = payload
         target_group = "Sequential" if tab_index == 0 else "Background"
         self._clear_drop_target()
-        self.actionDropped.emit(source_group, source_row, target_group)
+        self.actionDropped.emit(source_group, source_rows, target_group)
         event.acceptProposedAction()
 
     def paintEvent(self, event) -> None:
@@ -801,11 +913,7 @@ class SidebarItem(QPushButton):
         self.setMinimumHeight(38)
         self.setCheckable(False)
         self.setProperty("navItem", True)
-        self.set_compact(False)
-
-    def set_compact(self, compact: bool) -> None:
-        self.setText("" if compact else self.full_text)
-        self.setToolTip(self.full_text if compact else (self.description or self.full_text))
+        self.setToolTip(self.description or self.full_text)
 
 
 class QueuePane(QWidget):
@@ -909,10 +1017,12 @@ class QueuePane(QWidget):
         for button, name, size in self.icon_buttons:
             button.setIcon(app_icon(name, size=size, dark=dark))
 
-    def update_button_states(self, selected_row: int) -> None:
+    def update_button_states(self, selected_row: int | list[int]) -> None:
         row_count = self.model.rowCount()
-        self.up_button.setEnabled(selected_row > 0)
-        self.down_button.setEnabled(0 <= selected_row < row_count - 1)
+        rows = [selected_row] if isinstance(selected_row, int) else selected_row
+        valid_rows = sorted({row for row in rows if 0 <= row < row_count})
+        self.up_button.setEnabled(bool(valid_rows) and min(valid_rows) > 0)
+        self.down_button.setEnabled(bool(valid_rows) and max(valid_rows) < row_count - 1)
 
     def set_editing_locked(self, locked: bool) -> None:
         self.model.set_editing_locked(locked)

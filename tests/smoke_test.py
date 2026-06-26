@@ -51,6 +51,7 @@ def test_settings_round_trip() -> None:
         key_press_delay_min_ms=80,
         key_press_delay_max_ms=170,
         default_script_folder="scripts",
+        dark_mode=False,
         remember_window_geometry=False,
         start_keybind="F6",
         pause_keybind="F8",
@@ -60,6 +61,7 @@ def test_settings_round_trip() -> None:
     assert loaded.mouse_animation_speed == 7
     assert loaded.enhanced_humanlike_mouse is True
     assert loaded.default_script_folder == "scripts"
+    assert loaded.dark_mode is False
     assert loaded.remember_window_geometry is False
 
 
@@ -310,13 +312,36 @@ def test_action_model_drag_reorder() -> None:
     assert [action.comment for action in model.actions] == ["first", "second", "third"]
 
 
+def test_action_model_multi_row_operations() -> None:
+    model = ActionTableModel(
+        [
+            Action(action_type=ActionType.WAIT.value, comment="first"),
+            Action(action_type=ActionType.WAIT.value, comment="second"),
+            Action(action_type=ActionType.WAIT.value, comment="third"),
+            Action(action_type=ActionType.WAIT.value, comment="fourth"),
+        ]
+    )
+    assert model.move_rows([1, 2], -1) == [0, 1]
+    assert [action.comment for action in model.actions] == ["second", "third", "first", "fourth"]
+    assert model.move_rows_to([0, 1], 4) == [2, 3]
+    assert [action.comment for action in model.actions] == ["first", "fourth", "second", "third"]
+    assert model.duplicate_rows([2, 3]) == [4, 5]
+    assert [action.comment for action in model.actions] == ["first", "fourth", "second", "third", "second", "third"]
+    taken = model.take_rows([1, 4])
+    assert [action.comment for action in taken] == ["fourth", "second"]
+    assert [action.comment for action in model.actions] == ["first", "second", "third", "third"]
+    assert model.insert_existing_rows(1, taken) == [1, 2]
+    assert [action.comment for action in model.actions] == ["first", "fourth", "second", "second", "third", "third"]
+
+
 def test_action_rows_advertise_drag_and_drop() -> None:
     model = ActionTableModel([Action(action_type=ActionType.WAIT.value)])
     flags = model.flags(model.index(0, 0))
     assert flags & Qt.ItemIsDragEnabled
     assert flags & Qt.ItemIsDropEnabled
     assert model.flags(QModelIndex()) & Qt.ItemIsDropEnabled
-    assert decode_action_drag(encode_action_drag("Sequential", 0)) == ("Sequential", 0)
+    assert decode_action_drag(encode_action_drag("Sequential", 0)) == ("Sequential", [0])
+    assert decode_action_drag(encode_action_drag("Sequential", [2, 0, 2])) == ("Sequential", [0, 2])
     model.set_editing_locked(True)
     assert not (model.flags(model.index(0, 0)) & Qt.ItemIsDragEnabled)
 
@@ -436,6 +461,7 @@ def main() -> int:
         test_keyboard_action_target_labels_show_keys,
         test_script_payload_round_trip,
         test_action_model_drag_reorder,
+        test_action_model_multi_row_operations,
         test_action_rows_advertise_drag_and_drop,
         test_background_action_flag_does_not_duplicate_planning,
         test_nested_script_runtime_planning,

@@ -199,6 +199,10 @@ class SettingsDialog(QDialog):
             self._range_row("Random value between", "and", "milliseconds", self.result.key_press_delay_min_ms, self.result.key_press_delay_max_ms, "key"),
         )
         form.addRow("Default Script Location Folder", self._script_folder_row())
+        self.theme_button = QPushButton()
+        self.theme_button.clicked.connect(self._toggle_theme_choice)
+        self._sync_theme_button()
+        form.addRow("Theme", self.theme_button)
         self.remember_geometry = QCheckBox()
         self.remember_geometry.setChecked(self.result.remember_window_geometry)
         form.addRow("Remember Last Position && Size", self.remember_geometry)
@@ -304,6 +308,7 @@ class SettingsDialog(QDialog):
             key_press_delay_min_ms=self.key_delay_min.value(),
             key_press_delay_max_ms=self.key_delay_max.value(),
             default_script_folder=self.script_folder.text().strip(),
+            dark_mode=self.result.dark_mode,
             remember_window_geometry=self.remember_geometry.isChecked(),
             window_geometry=self.result.window_geometry,
             start_keybind=self.result.start_keybind,
@@ -333,6 +338,7 @@ class SettingsDialog(QDialog):
         self.key_delay_min.setValue(self.result.key_press_delay_min_ms)
         self.key_delay_max.setValue(self.result.key_press_delay_max_ms)
         self.script_folder.setText(self.result.default_script_folder)
+        self._sync_theme_button()
         self.remember_geometry.setChecked(self.result.remember_window_geometry)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
@@ -340,6 +346,15 @@ class SettingsDialog(QDialog):
         if focused and self.isAncestorOf(focused):
             focused.clearFocus()
         super().mousePressEvent(event)
+
+    def _toggle_theme_choice(self) -> None:
+        self.result.dark_mode = not self.result.dark_mode
+        self._sync_theme_button()
+
+    def _sync_theme_button(self) -> None:
+        if not hasattr(self, "theme_button"):
+            return
+        self.theme_button.setText("Dark Mode" if self.result.dark_mode else "Light Mode")
 
 
 def as_settings_dict(settings: AppSettings) -> dict[str, int | str | bool]:
@@ -351,6 +366,7 @@ def as_settings_dict(settings: AppSettings) -> dict[str, int | str | bool]:
         "key_press_delay_min_ms": settings.key_press_delay_min_ms,
         "key_press_delay_max_ms": settings.key_press_delay_max_ms,
         "default_script_folder": settings.default_script_folder,
+        "dark_mode": settings.dark_mode,
         "remember_window_geometry": settings.remember_window_geometry,
         "window_geometry": settings.window_geometry,
         "start_keybind": settings.start_keybind,
