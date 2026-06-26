@@ -166,7 +166,7 @@ class MainWindow(QMainWindow):
         root.addWidget(self._build_center_panel(), 1, 1)
         root.addWidget(self._build_right_panel(), 1, 2)
 
-        self.apply_theme(dark=True)
+        self.apply_theme(dark=self.app_settings.dark_mode)
         self._connect_dirty_tracking()
         self._suppress_dirty = False
         self._update_window_title()
@@ -251,11 +251,6 @@ class MainWindow(QMainWindow):
                 self.script_mutation_buttons.append(button)
             layout.addWidget(button)
 
-        self.theme_button = QPushButton("Dark Mode")
-        self._set_icon(self.theme_button, "theme")
-        self.theme_button.clicked.connect(self.toggle_theme)
-        self.theme_button.setMinimumWidth(110)
-        layout.addWidget(self.theme_button)
         return bar
 
     def _sidebar_section_label(self, text: str) -> QLabel:
@@ -270,11 +265,6 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(14, 18, 14, 14)
         layout.setSpacing(10)
-
-        self.sidebar_toggle = QPushButton("Collapse Sidebar")
-        self._set_icon(self.sidebar_toggle, "collapse")
-        self.sidebar_toggle.clicked.connect(self.toggle_sidebar)
-        layout.addWidget(self.sidebar_toggle)
 
         self.sidebar_section_labels: list[QLabel] = []
         current_script_label = self._sidebar_section_label("Current Script")
@@ -513,17 +503,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(value_label)
         return row
 
-    def toggle_sidebar(self) -> None:
-        compact = self.sidebar.width() > 130
-        self.sidebar.setFixedWidth(112 if compact else 264)
-        self.sidebar_toggle.setText("Expand" if compact else "Collapse Sidebar")
-        self.sidebar_toggle.setIcon(self._make_icon("expand" if compact else "collapse"))
-        self._replace_icon_registration(self.sidebar_toggle, "expand" if compact else "collapse", 22)
-        for label in self.sidebar_section_labels:
-            label.setVisible(not compact)
-        for item in self.sidebar_items:
-            item.set_compact(compact)
-
     def _replace_icon_registration(self, button: QPushButton, name: str, size: int) -> None:
         self.icon_buttons = [(existing, icon_name, icon_size) for existing, icon_name, icon_size in self.icon_buttons if existing is not button]
         self.icon_buttons.append((button, name, size))
@@ -581,6 +560,13 @@ class MainWindow(QMainWindow):
     def current_row(self) -> int:
         index = self.current_table().currentIndex()
         return index.row() if index.isValid() else -1
+
+    def current_selected_rows(self) -> list[int]:
+        return self.current_table().selected_rows()
+
+    def _select_rows(self, table: ActionTableView, rows: list[int]) -> None:
+        table.select_rows(rows)
+        self.update_action_button_states()
 
     def _retire_dialog(self, dialog: QDialog) -> None:
         dialog.setWindowModality(Qt.NonModal)
@@ -645,6 +631,8 @@ class MainWindow(QMainWindow):
     def edit_current_row(self) -> None:
         if self._editing_locked:
             return
+        if len(self.current_selected_rows()) != 1:
+            return
         row = self.current_row()
         if row < 0:
             return
@@ -662,11 +650,11 @@ class MainWindow(QMainWindow):
     def move_current_row(self, offset: int) -> None:
         if self._editing_locked:
             return
-        row = self.current_row()
-        if row < 0:
+        rows = self.current_selected_rows()
+        if not rows:
             return
-        new_row = self.current_model().move_row(row, offset)
-        self.current_table().selectRow(new_row)
+        new_rows = self.current_model().move_rows(rows, offset)
+        self.current_table().select_rows(new_rows)
         self.update_action_button_states()
 
     def _model_and_table_for_group(self, group_name: str) -> tuple[ActionTableModel, ActionTableView]:
@@ -674,35 +662,54 @@ class MainWindow(QMainWindow):
             return self.sequential_model, self.sequential_pane.table
         return self.background_model, self.background_pane.table
 
-    def move_action_by_drag(self, source_group: str, source_row: int, target_group: str, insertion_row: int) -> None:
+    def move_action_by_drag(self, source_group: str, source_rows: object, target_group: str, insertion_row: int) -> None:
         if self._editing_locked:
             return
+        rows = self._normalize_rows(source_rows)
         if source_group == target_group:
             model, table = self._model_and_table_for_group(source_group)
-            new_row = model.move_row_to(source_row, insertion_row)
-            table.selectRow(new_row)
+            new_rows = model.move_rows_to(rows, insertion_row)
+            table.select_rows(new_rows)
             self.update_action_button_states()
             return
-        self._transfer_action(source_group, source_row, target_group, insertion_row)
+        self._transfer_actions(source_group, rows, target_group, insertion_row)
 
-    def move_action_to_group(self, source_group: str, source_row: int, target_group: str) -> None:
+    def move_action_to_group(self, source_group: str, source_rows: object, target_group: str) -> None:
         if self._editing_locked or source_group == target_group:
             return
+        rows = self._normalize_rows(source_rows)
         target_model, _target_table = self._model_and_table_for_group(target_group)
-        self._transfer_action(source_group, source_row, target_group, target_model.rowCount())
+        self._transfer_actions(source_group, rows, target_group, target_model.rowCount())
 
     def _transfer_action(self, source_group: str, source_row: int, target_group: str, insertion_row: int) -> None:
+        self._transfer_actions(source_group, [source_row], target_group, insertion_row)
+
+    def _transfer_actions(self, source_group: str, source_rows: list[int], target_group: str, insertion_row: int) -> None:
         source_model, source_table = self._model_and_table_for_group(source_group)
-        target_model, _target_table = self._model_and_table_for_group(target_group)
-        action = source_model.take_row(source_row)
-        if action is None:
+        target_model, target_table = self._model_and_table_for_group(target_group)
+        rows = sorted({row for row in source_rows if 0 <= row < source_model.rowCount()})
+        if not rows:
             return
-        action.execution_group = SEQUENTIAL_GROUP if target_group == "Sequential" else BACKGROUND_GROUP
-        if target_group == "Background":
-            action.start_as_background = False
-        target_model.insert_existing_row(insertion_row, action)
-        self._select_nearest_row(source_table, source_model, source_row)
+        actions = source_model.take_rows(rows)
+        if not actions:
+            return
+        for action in actions:
+            action.execution_group = SEQUENTIAL_GROUP if target_group == "Sequential" else BACKGROUND_GROUP
+            if target_group == "Background":
+                action.start_as_background = False
+        inserted_rows = target_model.insert_existing_rows(insertion_row, actions)
+        self._select_nearest_row(source_table, source_model, rows[0])
+        if target_group == self.current_group():
+            target_table.select_rows(inserted_rows)
         self.update_action_button_states()
+
+    @staticmethod
+    def _normalize_rows(rows: object) -> list[int]:
+        if isinstance(rows, int):
+            return [rows]
+        if isinstance(rows, list):
+            return sorted({int(row) for row in rows})
+        return []
 
     def show_queue_menu(self, group_name: str, global_pos: QPoint) -> None:
         if self._editing_locked:
@@ -711,9 +718,11 @@ class MainWindow(QMainWindow):
         local = table.viewport().mapFromGlobal(global_pos)
         if table.viewport().rect().contains(local):
             index = table.indexAt(local)
-            if index.isValid():
+            if index.isValid() and index.row() not in table.selected_rows():
                 table.selectRow(index.row())
+        selected_rows = self.current_selected_rows()
         row = self.current_row()
+        single_selection = len(selected_rows) == 1
         menu = QMenu(self)
         self._menu_action(menu, "Add Action", "add", lambda: self.handle_add_request(group_name))
         self._menu_action(menu, "Edit Action", "edit", self.edit_current_row)
@@ -729,7 +738,9 @@ class MainWindow(QMainWindow):
         else:
             self._menu_action(menu, "Send to Sequential", "order", self.send_current_to_sequential)
         for action in menu.actions():
-            if action.text() in {"Edit Action", "Delete Action", "Duplicate Action", "Move Up", "Move Down", "Toggle Enabled"} and row < 0:
+            if action.text() in {"Delete Action", "Duplicate Action", "Move Up", "Move Down", "Toggle Enabled"} and not selected_rows:
+                action.setEnabled(False)
+            if action.text() == "Edit Action" and not single_selection:
                 action.setEnabled(False)
         menu.exec(global_pos)
 
@@ -754,9 +765,9 @@ class MainWindow(QMainWindow):
             self._menu_action(menu, "Send to Sequential", "order", self.send_current_to_sequential)
         menu.addSeparator()
         self._menu_action(menu, "Load Sample Actions", "load", self.load_sample_actions)
-        row = self.current_row()
+        selected_rows = self.current_selected_rows()
         for action in menu.actions():
-            if action.text() in {"Move Up", "Move Down", "Send to Background Actions", "Send to Sequential"} and row < 0:
+            if action.text() in {"Move Up", "Move Down", "Send to Background Actions", "Send to Sequential"} and not selected_rows:
                 action.setEnabled(False)
         menu.aboutToHide.connect(lambda: self._clear_overflow_menu(menu))
         menu.popup(global_pos)
@@ -775,60 +786,52 @@ class MainWindow(QMainWindow):
     def delete_current_row(self) -> None:
         if self._editing_locked:
             return
-        row = self.current_row()
-        if row >= 0:
+        rows = self.current_selected_rows()
+        if rows:
             model = self.current_model()
-            model.remove_row(row)
-            if model.rowCount():
-                self.current_table().selectRow(min(row, model.rowCount() - 1))
+            nearest = model.remove_rows(rows)
+            if model.rowCount() and nearest >= 0:
+                self.current_table().selectRow(nearest)
+            else:
+                self.current_table().clearSelection()
             self.update_action_button_states()
 
     def duplicate_current_row(self) -> None:
         if self._editing_locked:
             return
-        row = self.current_row()
-        if row >= 0:
-            new_row = self.current_model().duplicate_row(row)
-            self.current_table().selectRow(new_row)
+        rows = self.current_selected_rows()
+        if rows:
+            new_rows = self.current_model().duplicate_rows(rows)
+            self.current_table().select_rows(new_rows)
             self.update_action_button_states()
 
     def toggle_current_enabled(self) -> None:
         if self._editing_locked:
             return
-        row = self.current_row()
-        if row < 0:
+        rows = self.current_selected_rows()
+        if not rows:
             return
-        index = self.current_model().index(row, 1)
-        current = self.current_model().data(index, Qt.CheckStateRole)
-        self.current_model().setData(index, Qt.Unchecked if current == Qt.Checked else Qt.Checked, Qt.CheckStateRole)
+        for row in rows:
+            index = self.current_model().index(row, 1)
+            current = self.current_model().data(index, Qt.CheckStateRole)
+            self.current_model().setData(index, Qt.Unchecked if current == Qt.Checked else Qt.Checked, Qt.CheckStateRole)
         self.update_action_button_states()
 
     def send_current_to_background(self) -> None:
         if self._editing_locked or self.tabs.currentIndex() == 1:
             return
-        row = self.current_row()
-        if row < 0:
+        rows = self.current_selected_rows()
+        if not rows:
             return
-        action = self.sequential_model.take_row(row)
-        if action:
-            action.execution_group = BACKGROUND_GROUP
-            action.start_as_background = False
-            self.background_model.insert_existing_row(self.background_model.rowCount(), action)
-            self._select_nearest_row(self.sequential_pane.table, self.sequential_model, row)
-            self.update_action_button_states()
+        self._transfer_actions("Sequential", rows, "Background", self.background_model.rowCount())
 
     def send_current_to_sequential(self) -> None:
         if self._editing_locked or self.tabs.currentIndex() == 0:
             return
-        row = self.current_row()
-        if row < 0:
+        rows = self.current_selected_rows()
+        if not rows:
             return
-        action = self.background_model.take_row(row)
-        if action:
-            action.execution_group = SEQUENTIAL_GROUP
-            self.sequential_model.insert_existing_row(self.sequential_model.rowCount(), action)
-            self._select_nearest_row(self.background_pane.table, self.background_model, row)
-            self.update_action_button_states()
+        self._transfer_actions("Background", rows, "Sequential", self.sequential_model.rowCount())
 
     def _select_nearest_row(self, table: ActionTableView, model: ActionTableModel, row: int) -> None:
         if model.rowCount():
@@ -839,6 +842,8 @@ class MainWindow(QMainWindow):
 
     def save_selected_as_custom(self) -> None:
         if self._editing_locked:
+            return
+        if len(self.current_selected_rows()) != 1:
             return
         row = self.current_row()
         if row < 0:
@@ -1315,6 +1320,7 @@ class MainWindow(QMainWindow):
             key_press_delay_min_ms=self.app_settings.key_press_delay_min_ms,
             key_press_delay_max_ms=self.app_settings.key_press_delay_max_ms,
         )
+        self.apply_theme(self.app_settings.dark_mode)
         pending_release = self._pending_update_release
         self._pending_update_release = None
         if pending_release is not None:
@@ -1558,25 +1564,29 @@ class MainWindow(QMainWindow):
         self.background_pane.set_theme(dark)
         self.sequential_pane.apply_icons(dark)
         self.background_pane.apply_icons(dark)
-        self.theme_button.setText("Dark Mode" if dark else "Light Mode")
-        self.theme_button.setIcon(app_icon("theme", size=22, dark=dark))
 
     def toggle_theme(self) -> None:
+        self.app_settings.dark_mode = not self.dark_theme
+        self._save_app_settings_silent()
         self.apply_theme(not self.dark_theme)
 
     def update_action_button_states(self) -> None:
-        row = self.current_row()
-        has_selection = row >= 0
-        for button in getattr(self, "row_selection_buttons", []):
-            button.setEnabled(has_selection and not self._editing_locked)
+        selected_rows = self.current_selected_rows()
+        has_selection = bool(selected_rows)
+        single_selection = len(selected_rows) == 1
+        if hasattr(self, "primary_sidebar_items"):
+            self.primary_sidebar_items[1].setEnabled(single_selection and not self._editing_locked)
+            self.primary_sidebar_items[2].setEnabled(has_selection and not self._editing_locked)
+            self.primary_sidebar_items[3].setEnabled(has_selection and not self._editing_locked)
+        if hasattr(self, "library_sidebar_items"):
+            self.library_sidebar_items[0].setEnabled(single_selection and not self._editing_locked)
+            self.library_sidebar_items[1].setEnabled(not self._editing_locked)
+            self.library_sidebar_items[2].setEnabled(not self._editing_locked)
         if hasattr(self, "primary_sidebar_items"):
             self.primary_sidebar_items[0].setEnabled(not self._editing_locked)
-        for button in getattr(self, "library_sidebar_items", []):
-            button.setEnabled(not self._editing_locked)
-        self.current_pane().update_button_states(row)
+        self.current_pane().update_button_states(selected_rows)
         other_pane = self.background_pane if self.current_pane() is self.sequential_pane else self.sequential_pane
-        other_index = other_pane.table.currentIndex()
-        other_pane.update_button_states(other_index.row() if other_index.isValid() else -1)
+        other_pane.update_button_states(other_pane.table.selected_rows())
         if self._editing_locked:
             self.current_pane().update_button_states(-1)
             other_pane.update_button_states(-1)

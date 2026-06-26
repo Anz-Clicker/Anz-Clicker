@@ -15,6 +15,7 @@ class AppSettings:
     key_press_delay_min_ms: int = 80
     key_press_delay_max_ms: int = 160
     default_script_folder: str = "scripts"
+    dark_mode: bool = True
     remember_window_geometry: bool = True
     window_geometry: str = ""
     start_keybind: str = "F6"
@@ -50,6 +51,7 @@ class AppSettings:
         self.key_press_delay_min_ms = max(0, int(self.key_press_delay_min_ms))
         self.key_press_delay_max_ms = max(0, int(self.key_press_delay_max_ms))
         self.default_script_folder = str(self.default_script_folder or "scripts")
+        self.dark_mode = bool(self.dark_mode)
         self.remember_window_geometry = bool(self.remember_window_geometry)
         self.window_geometry = str(self.window_geometry or "")
         self.start_keybind = str(self.start_keybind or "")

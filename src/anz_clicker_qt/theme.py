@@ -22,6 +22,8 @@ def build_stylesheet(dark: bool) -> str:
         row_selected = "#17345f"
         row_selected_hover = "#24538f"
         input_bg = "#0d1628"
+        checkbox_bg = "#0d1628"
+        checkbox_border = "#5b6f91"
         scrollbar_track = "#0b1220"
         scrollbar_handle = "#33435f"
         scrollbar_handle_hover = "#4b5f82"
@@ -45,6 +47,8 @@ def build_stylesheet(dark: bool) -> str:
         row_selected = "#dceaff"
         row_selected_hover = "#b9d3ff"
         input_bg = "#ffffff"
+        checkbox_bg = "#ffffff"
+        checkbox_border = "#64748b"
         scrollbar_track = "#edf2f8"
         scrollbar_handle = "#b8c5d8"
         scrollbar_handle_hover = "#8fa2bd"
@@ -189,6 +193,33 @@ def build_stylesheet(dark: bool) -> str:
         border: 1px solid {border};
         selection-background-color: {selected};
         selection-color: {fg};
+    }}
+    QCheckBox {{
+        background: transparent;
+        spacing: 8px;
+    }}
+    QCheckBox::indicator {{
+        width: 16px;
+        height: 16px;
+        border: 1px solid {checkbox_border};
+        border-radius: 4px;
+        background: {checkbox_bg};
+    }}
+    QCheckBox::indicator:hover {{
+        border-color: {accent};
+    }}
+    QCheckBox::indicator:checked {{
+        background: {accent};
+        border-color: {accent};
+        image: none;
+    }}
+    QCheckBox::indicator:checked:disabled {{
+        background: {disabled};
+        border-color: {disabled};
+    }}
+    QCheckBox::indicator:unchecked:disabled {{
+        background: {disabled_bg};
+        border-color: {disabled_border};
     }}
     QTabWidget#ActionTabs {{
         background: transparent;
