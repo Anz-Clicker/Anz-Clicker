@@ -1457,6 +1457,13 @@ class MainWindow(QMainWindow):
         if installer is None:
             self._active_update_version = ""
             return
+        QMessageBox.information(
+            self,
+            "Ready to Install Update",
+            "The Anz Clicker installer will open to finish the update.\n\n"
+            "When installation is complete, leave \"Launch Anz Clicker\" checked on the final installer page "
+            "and click Finish to reopen the updated tool.",
+        )
         try:
             self._save_window_geometry_setting()
             launch_installer(Path(installer), version=self._active_update_version)
