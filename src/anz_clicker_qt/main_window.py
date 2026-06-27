@@ -1478,6 +1478,7 @@ class MainWindow(QMainWindow):
         marker_path = update_relaunch_marker_path()
         if not marker_path.is_file():
             return
+        self._bring_update_window_to_front()
         version = APP_VERSION
         try:
             payload = json.loads(marker_path.read_text(encoding="utf-8"))
@@ -1490,11 +1491,49 @@ class MainWindow(QMainWindow):
             marker_path.unlink(missing_ok=True)
         except OSError:
             pass
-        QMessageBox.information(
-            self,
+        message = QMessageBox(
+            QMessageBox.Information,
             "Update Complete",
             f"Anz Clicker has been updated to version {version}.",
+            self,
         )
+        message.setWindowModality(Qt.ApplicationModal)
+        message.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        message.exec()
+
+    def _bring_update_window_to_front(self) -> None:
+        if self.isMinimized():
+            self.showNormal()
+        else:
+            self.show()
+        self.setWindowState((self.windowState() & ~Qt.WindowMinimized) | Qt.WindowActive)
+        self.raise_()
+        self.activateWindow()
+        QApplication.alert(self, 0)
+        self._force_windows_foreground()
+
+    def _force_windows_foreground(self) -> None:
+        if not sys.platform.startswith("win"):
+            return
+        try:
+            import ctypes
+
+            hwnd = int(self.winId())
+            user32 = ctypes.windll.user32
+            HWND_TOPMOST = -1
+            HWND_NOTOPMOST = -2
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_SHOWWINDOW = 0x0040
+            SW_RESTORE = 9
+            flags = SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
+            user32.ShowWindow(hwnd, SW_RESTORE)
+            user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags)
+            user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, flags)
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
 
     def _save_app_settings_silent(self) -> bool:
         try:

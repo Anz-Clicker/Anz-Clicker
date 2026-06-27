@@ -4,6 +4,8 @@ All notable Anz Clicker changes are grouped by version. The current source versi
 
 ## Unreleased
 
+- Brought Anz Clicker to the foreground when it reopens after an update, then shows the update-complete confirmation on top.
+
 ## 1.4.2 - 2026-06-26
 
 - Changed update installs to open the standard interactive installer finish screen, allowing users to confirm completion and launch Anz Clicker from the installer checkbox.
