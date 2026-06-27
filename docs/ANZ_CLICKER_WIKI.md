@@ -168,6 +168,7 @@ Animated movement duration is controlled globally by Settings, not by an action-
 - Update downloads use HTTPS and verify GitHub's SHA-256 asset digest when one is available.
 - The updater must run the standard unsaved-script guard before downloading an installer.
 - The updater launches Inno Setup interactively with `/CLOSEAPPLICATIONS /NORESTART`. Do not use silent mode for in-app updates: the standard installer finish screen gives users clear completion feedback and the normal `Launch Anz Clicker` checkbox. The updater still writes the relaunch marker before starting the installer so the reopened app can show its one-time `Update Complete` confirmation.
+- When the relaunch marker is present, startup should bring the main window to the foreground before showing the `Update Complete` confirmation so users can see the update finished.
 
 ## Icons And Theme
 
