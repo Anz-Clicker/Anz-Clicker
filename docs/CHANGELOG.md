@@ -4,6 +4,8 @@ All notable Anz Clicker changes are grouped by version. The current source versi
 
 ## Unreleased
 
+## 1.4.3 - 2026-06-26
+
 - Brought Anz Clicker to the foreground when it reopens after an update, then shows the update-complete confirmation on top.
 
 ## 1.4.2 - 2026-06-26
