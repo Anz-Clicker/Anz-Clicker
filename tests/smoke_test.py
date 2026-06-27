@@ -27,7 +27,6 @@ from anz_clicker_qt.updater import (
     is_newer_version,
     parse_version,
     release_from_payload,
-    relaunch_watcher_command,
     write_relaunch_marker,
 )
 from anz_clicker_qt.widgets import ActionTableModel, decode_action_drag, encode_action_drag, target_label
@@ -92,16 +91,10 @@ def test_update_release_parsing_and_version_comparison() -> None:
     assert not is_newer_version("1.3.0", "1.3.0")
 
     command = installer_command(Path("Anz Clicker Setup.exe"))
-    assert "/SILENT" in command
     assert "/CLOSEAPPLICATIONS" in command
     assert "/NORESTART" in command
-    assert "/ANZRESTARTAPP" in command
-
-    relaunch_command = relaunch_watcher_command(1234, Path(r"C:\Program Files\Anz Clicker\Anz Clicker.exe"))
-    assert relaunch_command[:2] == ["powershell.exe", "-NoProfile"]
-    assert "Wait-Process -Id $installerPid" in relaunch_command[-1]
-    assert "Start-Process -FilePath $appPath" in relaunch_command[-1]
-    assert "Anz Clicker.exe" in relaunch_command[-1]
+    assert "/SILENT" not in command
+    assert "/VERYSILENT" not in command
 
     dotted_payload = {
         "tag_name": "v1.4.0",
