@@ -177,6 +177,7 @@ Animated movement duration is controlled globally by Settings, not by an action-
 - Do not hard-code paths to icon files in UI code.
 - Theme-aware UI should request the current theme variant when icons are refreshed.
 - Global colors and widget states belong in `build_stylesheet()` in `anz_clicker_qt/theme.py`.
+- The v1.5 shell keeps script/run controls in the header, action controls in the left sidebar, and runtime status/progress in the bottom bar to preserve horizontal room for action queues.
 - If Qt stylesheet backgrounds bleed past rounded corners, prefer a focused custom-painted widget surface over stacking multiple rounded stylesheet backgrounds. `QueuePane` paints its own rounded card for this reason.
 - Disabled buttons should be visibly lower opacity/contrast than enabled buttons.
 - Light and dark modes should both be checked after adding widgets or object names.

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QItemSelectionModel, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QMouseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -26,22 +27,61 @@ from PySide6.QtWidgets import (
 
 from app_settings import AppSettings
 from .constants import APP_VERSION
+from .icons import app_icon
 from .paths import scripts_dir, storage_root
-from .widgets import PlaceholderSpinBox, make_help_label
+from .widgets import KeyCaptureLineEdit, PlaceholderSpinBox, make_help_label, style_dialog_buttons
+
+
+class ActionOrderListWidget(QListWidget):
+    orderChanged = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("ActionOrderList")
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QAbstractItemView.InternalMove)
+        self.setDragDropOverwriteMode(False)
+        self.setDefaultDropAction(Qt.MoveAction)
+        self.setAutoScroll(True)
+        self.setAutoScrollMargin(56)
+
+    def dropEvent(self, event) -> None:
+        super().dropEvent(event)
+        self.orderChanged.emit()
 
 
 class ActionOrderDialog(QDialog):
     def __init__(self, ordered_names: list[str], hidden_names: list[str], default_order: list[str], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Edit Action Order")
+        self.setObjectName("ActionOrderDialog")
         self.result: tuple[list[str], list[str]] | None = None
         self.deleted_custom_actions: list[str] = []
         self.default_order = default_order
         self.items = [{"name": name, "hidden": name in hidden_names} for name in ordered_names]
         layout = QVBoxLayout(self)
-        self.list_widget = QListWidget()
-        self.list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
+        layout.setContentsMargins(20, 16, 20, 14)
+        layout.setSpacing(10)
+
+        title_row = QHBoxLayout()
+        title_stack = QVBoxLayout()
+        title_stack.setSpacing(2)
+        title = QLabel("Edit Action Order")
+        title.setObjectName("DialogTitle")
+        subtitle = QLabel("Rearrange actions and control visibility.")
+        subtitle.setObjectName("DialogSubtitle")
+        title_stack.addWidget(title)
+        title_stack.addWidget(subtitle)
+        title_row.addLayout(title_stack, 1)
+        layout.addLayout(title_row)
+
+        self.list_widget = ActionOrderListWidget()
         self.list_widget.currentRowChanged.connect(lambda *_: self._update_button_states())
+        self.list_widget.itemSelectionChanged.connect(self._update_button_states)
+        self.list_widget.orderChanged.connect(self._sync_items_from_list)
         layout.addWidget(self.list_widget, 1)
         controls = QHBoxLayout()
         self.move_up_button = QPushButton("Move Up")
@@ -60,72 +100,111 @@ class ActionOrderDialog(QDialog):
         self.reset_button.clicked.connect(self._reset)
         controls.addWidget(self.reset_button)
         layout.addLayout(controls)
+        note = QLabel("Drag items or use the controls below to reorder actions.")
+        note.setObjectName("SettingsNote")
+        layout.addWidget(note)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        style_dialog_buttons(buttons)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
         self._refresh()
-        self.resize(520, 560)
+        self.resize(760, 680)
 
-    def _refresh(self, select_row: int = 0) -> None:
+    def _refresh(self, select_rows: int | list[int] | None = 0) -> None:
         self.list_widget.clear()
         for item in self.items:
-            list_item = QListWidgetItem(("Hidden  " if item["hidden"] else "Visible  ") + item["name"])
+            label = ("Hidden" if item["hidden"] else "Visible").ljust(8)
+            list_item = QListWidgetItem(f"::::   {label}   {item['name']}")
+            list_item.setData(Qt.UserRole, dict(item))
+            list_item.setSizeHint(QSize(0, 42))
             if item["hidden"]:
                 list_item.setForeground(QColor("#8ea0bf"))
+            list_item.setFlags((list_item.flags() | Qt.ItemIsDragEnabled) & ~Qt.ItemIsDropEnabled)
             self.list_widget.addItem(list_item)
         if self.items:
-            self.list_widget.setCurrentRow(max(0, min(select_row, len(self.items) - 1)))
+            if select_rows is None:
+                select_rows = []
+            if isinstance(select_rows, int):
+                select_rows = [select_rows]
+            clamped_rows = [max(0, min(row, len(self.items) - 1)) for row in select_rows]
+            self.list_widget.clearSelection()
+            for row in clamped_rows:
+                self.list_widget.item(row).setSelected(True)
+            self.list_widget.setCurrentRow(clamped_rows[0] if clamped_rows else 0, QItemSelectionModel.NoUpdate)
         self._update_button_states()
 
     def _move(self, offset: int) -> None:
-        row = self.list_widget.currentRow()
-        target = row + offset
-        if row < 0 or target < 0 or target >= len(self.items):
+        rows = self._selected_rows()
+        if not rows:
             return
-        self.items[row], self.items[target] = self.items[target], self.items[row]
-        self._refresh(target)
+        if offset < 0 and rows[0] <= 0:
+            return
+        if offset > 0 and rows[-1] >= len(self.items) - 1:
+            return
+        if offset < 0:
+            for row in rows:
+                self.items[row - 1], self.items[row] = self.items[row], self.items[row - 1]
+        else:
+            for row in reversed(rows):
+                self.items[row + 1], self.items[row] = self.items[row], self.items[row + 1]
+        self._refresh([row + offset for row in rows])
 
     def _toggle(self) -> None:
-        row = self.list_widget.currentRow()
-        if row < 0:
+        rows = self._selected_rows()
+        if not rows:
             return
-        self.items[row]["hidden"] = not self.items[row]["hidden"]
-        self._refresh(row)
+        for row in rows:
+            self.items[row]["hidden"] = not self.items[row]["hidden"]
+        self._refresh(rows)
 
     def _reset(self) -> None:
         self.items = [{"name": name, "hidden": False} for name in self.default_order]
         self._refresh()
 
     def _delete_custom_action(self) -> None:
-        row = self.list_widget.currentRow()
-        if row < 0 or row >= len(self.items):
+        rows = self._selected_rows()
+        if not rows or any(not self._is_custom_action(self.items[row]["name"]) for row in rows):
             return
-        display_name = self.items[row]["name"]
-        if not self._is_custom_action(display_name):
-            return
-        custom_name = display_name.removeprefix("Custom: ")
+        custom_names = [self.items[row]["name"].removeprefix("Custom: ") for row in rows]
+        action_word = "action" if len(custom_names) == 1 else "actions"
+        names_preview = ", ".join(custom_names[:4]) + ("..." if len(custom_names) > 4 else "")
         choice = QMessageBox.question(
             self,
             "Delete Custom Action",
-            f'Delete the custom action "{custom_name}"? This cannot be undone.',
+            f"Delete the selected custom {action_word}: {names_preview}? This cannot be undone.",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
         if choice != QMessageBox.Yes:
             return
-        self.deleted_custom_actions.append(custom_name)
-        del self.items[row]
-        self.default_order = [item for item in self.default_order if item != display_name]
-        self._refresh(min(row, len(self.items) - 1))
+        for row in reversed(rows):
+            display_name = self.items[row]["name"]
+            self.deleted_custom_actions.append(display_name.removeprefix("Custom: "))
+            del self.items[row]
+            self.default_order = [item for item in self.default_order if item != display_name]
+        self._refresh(min(rows[0], len(self.items) - 1) if self.items else None)
 
     def _update_button_states(self) -> None:
-        row = self.list_widget.currentRow()
-        has_selection = 0 <= row < len(self.items)
-        self.move_up_button.setEnabled(has_selection and row > 0)
-        self.move_down_button.setEnabled(has_selection and row < len(self.items) - 1)
+        rows = self._selected_rows()
+        has_selection = bool(rows)
+        self.move_up_button.setEnabled(has_selection and rows[0] > 0)
+        self.move_down_button.setEnabled(has_selection and rows[-1] < len(self.items) - 1)
         self.toggle_button.setEnabled(has_selection)
-        self.delete_button.setEnabled(has_selection and self._is_custom_action(self.items[row]["name"]))
+        self.delete_button.setEnabled(has_selection and all(self._is_custom_action(self.items[row]["name"]) for row in rows))
+
+    def _selected_rows(self) -> list[int]:
+        return sorted(index.row() for index in self.list_widget.selectedIndexes())
+
+    def _sync_items_from_list(self) -> None:
+        synced: list[dict[str, str | bool]] = []
+        for row in range(self.list_widget.count()):
+            data = self.list_widget.item(row).data(Qt.UserRole)
+            if isinstance(data, dict) and "name" in data:
+                synced.append({"name": str(data["name"]), "hidden": bool(data.get("hidden", False))})
+        if len(synced) == len(self.items):
+            self.items = synced
+        self._update_button_states()
 
     @staticmethod
     def _is_custom_action(display_name: str) -> bool:
@@ -146,14 +225,16 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Settings")
         self.setObjectName("SettingsDialog")
         self.result = AppSettings.from_dict(as_settings_dict(settings))
+        self._original_dark_mode = self.result.dark_mode
+        self._section_icons: list[tuple[QLabel, str, int]] = []
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(22, 22, 22, 18)
-        layout.setSpacing(16)
+        layout.setContentsMargins(18, 16, 18, 14)
+        layout.setSpacing(10)
 
         title_row = QHBoxLayout()
         title = QLabel("Settings")
-        title.setObjectName("SectionTitle")
+        title.setObjectName("DialogTitle")
         title_row.addWidget(title)
         title_row.addStretch(1)
         version_label = QLabel(f"Version {APP_VERSION}")
@@ -161,10 +242,9 @@ class SettingsDialog(QDialog):
         title_row.addWidget(version_label)
         layout.addLayout(title_row)
 
-        form = QFormLayout()
-        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        input_section, input_form = self._settings_section("Input / Timing", "clock")
         self.animation_speed = self._spin(1, 10, self.result.mouse_animation_speed)
-        form.addRow(
+        input_form.addRow(
             make_help_label(
                 self,
                 "Mouse animation speed (1-10)",
@@ -174,7 +254,7 @@ class SettingsDialog(QDialog):
         )
         self.enhanced_mouse = QCheckBox("Enhanced humanlike animated mouse movement")
         self.enhanced_mouse.setChecked(self.result.enhanced_humanlike_mouse)
-        form.addRow(
+        input_form.addRow(
             make_help_label(
                 self,
                 "Animated mouse movement style",
@@ -182,7 +262,7 @@ class SettingsDialog(QDialog):
             ),
             self.enhanced_mouse,
         )
-        form.addRow(
+        input_form.addRow(
             make_help_label(
                 self,
                 "Mouse click down/up delay",
@@ -190,7 +270,7 @@ class SettingsDialog(QDialog):
             ),
             self._range_row("Random value between", "and", "milliseconds", self.result.mouse_click_delay_min_ms, self.result.mouse_click_delay_max_ms, "mouse"),
         )
-        form.addRow(
+        input_form.addRow(
             make_help_label(
                 self,
                 "Key press down/up delay",
@@ -198,18 +278,33 @@ class SettingsDialog(QDialog):
             ),
             self._range_row("Random value between", "and", "milliseconds", self.result.key_press_delay_min_ms, self.result.key_press_delay_max_ms, "key"),
         )
-        form.addRow("Default Script Location Folder", self._script_folder_row())
+        layout.addWidget(input_section)
+
+        storage_section, storage_form = self._settings_section("Storage & Appearance", "load")
+        storage_form.addRow("Default Script Location Folder", self._script_folder_row())
         self.theme_button = QPushButton()
         self.theme_button.clicked.connect(self._toggle_theme_choice)
         self._sync_theme_button()
-        form.addRow("Theme", self.theme_button)
+        storage_form.addRow("Theme", self.theme_button)
+        layout.addWidget(storage_section)
+
+        controls_section, controls_form = self._settings_section("Controls / Keybinds", "keybind")
+        self.start_keybind = KeyCaptureLineEdit(self.result.start_keybind)
+        self.start_keybind.setToolTip("Click here, then press the key or key combination to assign Start/Stop.")
+        controls_form.addRow("Start / Stop Keybind", self.start_keybind)
+        self.pause_keybind = KeyCaptureLineEdit(self.result.pause_keybind)
+        self.pause_keybind.setToolTip("Click here, then press the key or key combination to assign Pause/Unpause.")
+        controls_form.addRow("Pause / Unpause Keybind", self.pause_keybind)
+        layout.addWidget(controls_section)
+
+        behavior_section, behavior_form = self._settings_section("Behavior", "settings")
         self.remember_geometry = QCheckBox()
         self.remember_geometry.setChecked(self.result.remember_window_geometry)
-        form.addRow("Remember Last Position && Size", self.remember_geometry)
-        layout.addLayout(form)
+        behavior_form.addRow("Remember Last Position && Size", self.remember_geometry)
+        layout.addWidget(behavior_section)
 
         note = QLabel("These settings are saved for Anz Clicker and applied when scripts run.")
-        note.setObjectName("SidebarSubtle")
+        note.setObjectName("SettingsNote")
         note.setWordWrap(True)
         layout.addWidget(note)
 
@@ -225,11 +320,49 @@ class SettingsDialog(QDialog):
         bottom_row.addWidget(self.check_updates_button)
         bottom_row.addStretch(1)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        style_dialog_buttons(buttons)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         bottom_row.addWidget(buttons)
         layout.addLayout(bottom_row)
-        self.resize(620, 350)
+        self.resize(840, 570)
+
+    def _settings_section(self, title: str, icon_name: str) -> tuple[QFrame, QFormLayout]:
+        section = QFrame()
+        section.setObjectName("SettingsSection")
+        outer = QVBoxLayout(section)
+        outer.setContentsMargins(14, 11, 14, 12)
+        outer.setSpacing(8)
+
+        header = QHBoxLayout()
+        header.setSpacing(10)
+        icon = QLabel()
+        icon.setObjectName("SettingsSectionIcon")
+        icon.setAlignment(Qt.AlignCenter)
+        self._section_icons.append((icon, icon_name, 20))
+        self._apply_section_icon(icon, icon_name, 20)
+        header.addWidget(icon)
+        title_label = QLabel(title)
+        title_label.setObjectName("SettingsSectionTitle")
+        header.addWidget(title_label)
+        header.addStretch(1)
+        outer.addLayout(header)
+
+        form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        form.setLabelAlignment(Qt.AlignLeft)
+        form.setFormAlignment(Qt.AlignTop)
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(8)
+        outer.addLayout(form)
+        return section, form
+
+    def _apply_section_icon(self, label: QLabel, icon_name: str, size: int) -> None:
+        label.setPixmap(app_icon(icon_name, size=size, dark=self.result.dark_mode).pixmap(size, size))
+
+    def _refresh_section_icons(self) -> None:
+        for label, icon_name, size in self._section_icons:
+            self._apply_section_icon(label, icon_name, size)
 
     def set_update_checking(self, checking: bool) -> None:
         self.check_updates_button.setEnabled(not checking)
@@ -300,6 +433,15 @@ class SettingsDialog(QDialog):
             self.script_folder.setText(selected)
 
     def _save(self) -> None:
+        start_keybind = self.start_keybind.text().strip()
+        pause_keybind = self.pause_keybind.text().strip()
+        if start_keybind and pause_keybind and start_keybind.lower() == pause_keybind.lower():
+            QMessageBox.warning(
+                self,
+                "Duplicate Keybind",
+                "Start / Stop and Pause / Unpause cannot use the same keybind.",
+            )
+            return
         self.result = AppSettings(
             mouse_animation_speed=self.animation_speed.value(),
             enhanced_humanlike_mouse=self.enhanced_mouse.isChecked(),
@@ -311,8 +453,8 @@ class SettingsDialog(QDialog):
             dark_mode=self.result.dark_mode,
             remember_window_geometry=self.remember_geometry.isChecked(),
             window_geometry=self.result.window_geometry,
-            start_keybind=self.result.start_keybind,
-            pause_keybind=self.result.pause_keybind,
+            start_keybind=start_keybind,
+            pause_keybind=pause_keybind,
         )
         self.result.normalize()
         self.accept()
@@ -338,7 +480,10 @@ class SettingsDialog(QDialog):
         self.key_delay_min.setValue(self.result.key_press_delay_min_ms)
         self.key_delay_max.setValue(self.result.key_press_delay_max_ms)
         self.script_folder.setText(self.result.default_script_folder)
+        self.start_keybind.setText(self.result.start_keybind)
+        self.pause_keybind.setText(self.result.pause_keybind)
         self._sync_theme_button()
+        self._preview_theme_choice()
         self.remember_geometry.setChecked(self.result.remember_window_geometry)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
@@ -350,11 +495,24 @@ class SettingsDialog(QDialog):
     def _toggle_theme_choice(self) -> None:
         self.result.dark_mode = not self.result.dark_mode
         self._sync_theme_button()
+        self._preview_theme_choice()
 
     def _sync_theme_button(self) -> None:
         if not hasattr(self, "theme_button"):
             return
         self.theme_button.setText("Dark Mode" if self.result.dark_mode else "Light Mode")
+        self._refresh_section_icons()
+
+    def _preview_theme_choice(self) -> None:
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "apply_theme"):
+            parent.apply_theme(self.result.dark_mode)
+
+    def reject(self) -> None:
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "apply_theme"):
+            parent.apply_theme(self._original_dark_mode)
+        super().reject()
 
 
 def as_settings_dict(settings: AppSettings) -> dict[str, int | str | bool]:
