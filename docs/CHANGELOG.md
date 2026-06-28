@@ -4,6 +4,18 @@ All notable Anz Clicker changes are grouped by version. The current source versi
 
 ## Unreleased
 
+- Began the v1.5 UI overhaul with a more compact workspace: run controls moved into the header, status/progress moved to a bottom bar, the right sidebar was removed from the active layout, action queue controls were simplified, and empty queues now show a guided empty state.
+- Moved Start/Pause keybind editing into Settings, added duplicate-keybind validation, kept run button keybind labels synchronized, and cleaned up status/header text backgrounds.
+- Tightened the v1.5 workspace width, narrowed and refined the sidebar buttons, and attached the Sequential/Background tabs visually to the action pane.
+- Further narrowed the sidebar, inset the action tabs from the rounded pane corner, and refreshed Add/Edit Action dialogs with cleaner section cards and checkmark-style checkbox indicators.
+- Polished the v1.5 workspace with immediate Settings theme preview, a slightly wider minimum window, tighter action-editor spacing, and a redesigned Tutorial window using matching section cards.
+- Tightened the Tutorial window, cleaned up action-tab ghost outlines, and restyled action-type dropdown popups with the modern list and scrollbar treatment.
+- Prevented Edit Default Actions from inheriting the currently selected queue action, and redesigned Settings into reusable grouped cards for timing, storage, keybinds, and behavior.
+- Redesigned Edit Action Order with multi-selection, drag reordering, modern list styling, shared dialog Save-button styling, and matching scrollbar treatment.
+- Fixed Edit Action Order drag drops so actions insert between rows instead of replacing rows, enabled auto-scroll while dragging, and tightened Settings dialog spacing.
+- Replaced Settings and Tutorial placeholder section markers with theme-aware SVG icons from the shared icon palette.
+- Replaced remaining placeholder UI glyphs with themed icons for the empty action queue and status bar, removed Settings icon outlines, and removed an unused legacy right-panel layout helper.
+
 ## 1.4.3 - 2026-06-26
 
 - Brought Anz Clicker to the foreground when it reopens after an update, then shows the update-complete confirmation on top.

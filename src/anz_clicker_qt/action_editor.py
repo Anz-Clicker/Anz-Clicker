@@ -49,6 +49,7 @@ from .widgets import (
     choose_screen_area,
     make_help_button,
     plain_number_field,
+    style_dialog_buttons,
     time_row,
 )
 
@@ -62,27 +63,65 @@ class ActionEditorDialog(QDialog):
         self._init_state(action, preset_store)
 
         layout = QVBoxLayout(self)
-        form = QFormLayout()
-        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        layout.setContentsMargins(18, 16, 18, 14)
+        layout.setSpacing(8)
 
-        self._build_action_header(form, action, action_choices)
+        self._add_editor_heading(layout, title)
+
+        basic_section, basic_form = self._section("Basic")
+        self._build_action_header(basic_form, action, action_choices)
         self._create_reusable_fields(action)
         self._configure_reusable_fields()
         self._load_reusable_field_values(action)
 
+        timing_section, timing_form = self._section("Timing")
         self.general_settings = GeneralActionSettings(action)
-        self.general_settings.add_to_form(form)
+        self.general_settings.add_to_form(timing_form)
         self._bind_general_settings_fields()
 
-        self.dynamic_panel = QFrame()
-        self.dynamic_layout = QFormLayout(self.dynamic_panel)
+        self.dynamic_panel, self.dynamic_layout = self._section("Action Details")
         self.dynamic_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        self.dynamic_layout.setSpacing(7)
 
-        layout.addLayout(form)
+        layout.addWidget(basic_section)
+        layout.addWidget(timing_section)
         layout.addWidget(self.dynamic_panel)
         self._add_footer(layout)
         self._refresh_dynamic_panel()
-        self.resize(700, 640)
+        self.resize(820, 680)
+
+    def _add_editor_heading(self, layout: QVBoxLayout, title: str) -> None:
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        title_stack = QVBoxLayout()
+        title_stack.setContentsMargins(0, 0, 0, 0)
+        heading = QLabel(title)
+        heading.setObjectName("DialogTitle")
+        subtitle = QLabel("Configure the action settings, timing, and action-specific details.")
+        subtitle.setObjectName("DialogSubtitle")
+        title_stack.addWidget(heading)
+        title_stack.addWidget(subtitle)
+        header.addLayout(title_stack)
+        header.addStretch(1)
+        layout.addLayout(header)
+
+    def _section(self, title: str) -> tuple[QFrame, QFormLayout]:
+        frame = QFrame()
+        frame.setObjectName("ActionEditorSection")
+        outer = QVBoxLayout(frame)
+        outer.setContentsMargins(15, 11, 15, 13)
+        outer.setSpacing(7)
+        label = QLabel(title)
+        label.setObjectName("ActionEditorSectionTitle")
+        outer.addWidget(label)
+        form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        form.setLabelAlignment(Qt.AlignLeft)
+        form.setFormAlignment(Qt.AlignTop)
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(7)
+        outer.addLayout(form)
+        return frame, form
 
     def _init_state(self, action: Action, preset_store: PresetStore) -> None:
         self.preset_store = preset_store
@@ -251,6 +290,7 @@ class ActionEditorDialog(QDialog):
         bottom_row.addWidget(background_help)
         bottom_row.addStretch(1)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        style_dialog_buttons(buttons)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         bottom_row.addWidget(buttons)

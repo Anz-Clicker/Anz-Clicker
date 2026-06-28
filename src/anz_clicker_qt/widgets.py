@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QDialog,
+    QDialogButtonBox,
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
@@ -36,6 +37,13 @@ from .icons import app_icon
 
 PICTURE_ACTIONS = {ActionType.WAIT_FOR_PICTURE.value, ActionType.AUTO_PICTURE_CLICKER.value}
 ACTION_DRAG_MIME = "application/x-anz-clicker-action-row"
+
+
+def style_dialog_buttons(buttons: QDialogButtonBox) -> None:
+    for role in (QDialogButtonBox.Save, QDialogButtonBox.Ok):
+        button = buttons.button(role)
+        if button:
+            button.setObjectName("SaveButton")
 
 
 def encode_action_drag(group_name: str, rows: int | list[int]) -> QMimeData:
@@ -865,7 +873,7 @@ class RoundedTableFrame(QWidget):
         self.setObjectName("RoundedTableFrame")
         self.setAttribute(Qt.WA_StyledBackground, False)
         self.setAutoFillBackground(False)
-        self.card_color = QColor("#10192c")
+        self.card_color = QColor("#0d1b31")
         self.border_color = QColor("#233149")
         self.inner_border_color = QColor("#233149")
         layout = QVBoxLayout(self)
@@ -875,7 +883,7 @@ class RoundedTableFrame(QWidget):
         self.inner_border = TableBorderOverlay(self)
 
     def set_theme(self, dark: bool) -> None:
-        self.card_color = QColor("#10192c" if dark else "#ffffff")
+        self.card_color = QColor("#0d1b31" if dark else "#ffffff")
         self.border_color = QColor("#233149" if dark else "#d9e2f0")
         self.inner_border_color = QColor("#233149" if dark else "#d9e2f0")
         self.inner_border.set_color(self.inner_border_color)
@@ -927,7 +935,7 @@ class SidebarItem(QPushButton):
         self.setIcon(icon)
         self.setIconSize(QSize(17, 17))
         self.setCursor(Qt.PointingHandCursor)
-        self.setMinimumHeight(38)
+        self.setMinimumHeight(36)
         self.setCheckable(False)
         self.setProperty("navItem", True)
         self.setToolTip(self.description or self.full_text)
@@ -953,9 +961,14 @@ class QueuePane(QWidget):
         self.random_repeat_input.setPlaceholderText("0")
         self.table = ActionTableView(model, group_name)
         self.table_frame = RoundedTableFrame(self.table)
+        self.empty_state = self._build_empty_state()
+        self.empty_state.setParent(self.table_frame)
         self.setMinimumHeight(360)
         self.icon_buttons: list[tuple[QPushButton, str, int]] = []
         self.table.contextRequested.connect(lambda point: self.menuRequested.emit(self.group_name, point))
+        self.model.rowsInserted.connect(lambda *_: self._sync_empty_state())
+        self.model.rowsRemoved.connect(lambda *_: self._sync_empty_state())
+        self.model.modelReset.connect(lambda *_: self._sync_empty_state())
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 10, 10)
@@ -967,29 +980,24 @@ class QueuePane(QWidget):
         toolbar.addWidget(title)
         toolbar.addStretch(1)
 
-        self.add_button = QPushButton("Add Action")
-        self._set_icon(self.add_button, "add")
-        self.add_button.clicked.connect(lambda: self.addRequested.emit(self.group_name))
-        toolbar.addWidget(self.add_button)
-
-        self.up_button = QPushButton()
+        self.up_button = QPushButton("Move Up")
         self._set_icon(self.up_button, "up")
         self.up_button.setToolTip("Move selected action up")
-        self.up_button.setFixedWidth(38)
+        self.up_button.setMinimumWidth(124)
         self.up_button.clicked.connect(lambda: self.moveRequested.emit(-1))
         toolbar.addWidget(self.up_button)
 
-        self.down_button = QPushButton()
+        self.down_button = QPushButton("Move Down")
         self._set_icon(self.down_button, "down")
         self.down_button.setToolTip("Move selected action down")
-        self.down_button.setFixedWidth(38)
+        self.down_button.setMinimumWidth(138)
         self.down_button.clicked.connect(lambda: self.moveRequested.emit(1))
         toolbar.addWidget(self.down_button)
 
-        self.more_button = QPushButton()
+        self.more_button = QPushButton("More")
         self._set_icon(self.more_button, "more")
         self.more_button.setToolTip("More action options")
-        self.more_button.setFixedWidth(42)
+        self.more_button.setMinimumWidth(116)
         self.more_button.clicked.connect(lambda: self.overflowRequested.emit(self.group_name, self.more_button.mapToGlobal(self.more_button.rect().bottomLeft())))
         toolbar.addWidget(self.more_button)
         outer.addLayout(toolbar)
@@ -1008,6 +1016,43 @@ class QueuePane(QWidget):
 
         outer.addWidget(self.table_frame, 1)
         self.update_button_states(-1)
+        self._sync_empty_state()
+
+    def _build_empty_state(self) -> QWidget:
+        empty = QWidget()
+        empty.setObjectName("EmptyActionState")
+        layout = QVBoxLayout(empty)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(10)
+        layout.addStretch(1)
+        icon = QLabel()
+        icon.setObjectName("EmptyStateIcon")
+        icon.setAlignment(Qt.AlignCenter)
+        icon.setPixmap(app_icon("clipboard", size=38, dark=True).pixmap(38, 38))
+        self.empty_state_icon = icon
+        layout.addWidget(icon, 0, Qt.AlignCenter)
+        title = QLabel("No actions added yet.")
+        title.setObjectName("EmptyStateTitle")
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+        hint = QLabel('Click "Add Action" in the left sidebar to get started.')
+        hint.setObjectName("EmptyStateHint")
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        layout.addStretch(1)
+        empty.hide()
+        return empty
+
+    def _sync_empty_state(self) -> None:
+        self.empty_state.setGeometry(self.table_frame.rect().adjusted(8, 8, -8, -8))
+        self.empty_state.setVisible(self.model.rowCount() == 0)
+        if self.empty_state.isVisible():
+            self.empty_state.raise_()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._sync_empty_state()
 
     def set_theme(self, dark: bool) -> None:
         self.card_color = QColor("#10192c" if dark else "#ffffff")
@@ -1033,6 +1078,8 @@ class QueuePane(QWidget):
     def apply_icons(self, dark: bool) -> None:
         for button, name, size in self.icon_buttons:
             button.setIcon(app_icon(name, size=size, dark=dark))
+        if hasattr(self, "empty_state_icon"):
+            self.empty_state_icon.setPixmap(app_icon("clipboard", size=38, dark=dark).pixmap(38, 38))
 
     def update_button_states(self, selected_row: int | list[int]) -> None:
         row_count = self.model.rowCount()
@@ -1045,7 +1092,6 @@ class QueuePane(QWidget):
         self.model.set_editing_locked(locked)
         self.table.set_editing_locked(locked)
         self.table.viewport().update()
-        self.add_button.setEnabled(not locked)
         self.more_button.setEnabled(not locked)
         self.repeat_input.setEnabled(not locked)
         self.random_repeat_input.setEnabled(not locked)

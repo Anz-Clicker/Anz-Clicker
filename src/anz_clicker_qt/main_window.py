@@ -75,7 +75,6 @@ from .widgets import (
     ActionTabBar,
     ActionTableModel,
     ActionTableView,
-    KeyCaptureLineEdit,
     QueuePane,
     SidebarItem,
 )
@@ -89,8 +88,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.dark_theme = True
         self.icon_buttons: list[tuple[QPushButton, str, int]] = []
+        self.status_icon_labels: list[tuple[QLabel, str, int]] = []
         self.setWindowTitle(APP_TITLE)
-        self.setMinimumSize(1040, 680)
+        self.setMinimumSize(1100, 620)
         logo = resource_path("zabian_logo.png")
         if logo.exists():
             self.setWindowIcon(QIcon(str(logo)))
@@ -109,13 +109,7 @@ class MainWindow(QMainWindow):
             key_press_delay_min_ms=self.app_settings.key_press_delay_min_ms,
             key_press_delay_max_ms=self.app_settings.key_press_delay_max_ms,
         )
-        self._loading_keybinds = True
-        if hasattr(self, "start_key_input"):
-            self.start_key_input.setText(self.app_settings.start_keybind)
-        if hasattr(self, "pause_key_input"):
-            self.pause_key_input.setText(self.app_settings.pause_keybind)
         self._loading_keybinds = False
-        self._apply_keybinds()
         self.preset_store = PresetStore(presets_path())
         self.runner = ActionRunner(lambda text: self.runnerStatus.emit(text), settings=self.app_settings)
         self.runnerStatus.connect(self._set_status)
@@ -143,7 +137,6 @@ class MainWindow(QMainWindow):
         self._open_overflow_menu: QMenu | None = None
         self._open_editors: list[ActionEditorDialog] = []
         self._capturing_keybind = False
-        self._loading_keybinds = True
         self.current_script_path: Path | None = None
         self.current_script_metadata = self._new_script_metadata()
         self.is_dirty = False
@@ -160,11 +153,11 @@ class MainWindow(QMainWindow):
         root.setColumnStretch(1, 1)
         root.setRowStretch(1, 1)
 
-        root.addWidget(self._build_topbar(), 0, 0, 1, 3)
+        root.addWidget(self._build_topbar(), 0, 0, 1, 2)
         self.sidebar = self._build_sidebar()
         root.addWidget(self.sidebar, 1, 0)
         root.addWidget(self._build_center_panel(), 1, 1)
-        root.addWidget(self._build_right_panel(), 1, 2)
+        root.addWidget(self._build_status_bar(), 2, 0, 1, 2)
 
         self.apply_theme(dark=self.app_settings.dark_mode)
         self._connect_dirty_tracking()
@@ -183,7 +176,6 @@ class MainWindow(QMainWindow):
         self.save_script_shortcut.activated.connect(self.save_script)
         self.save_as_script_shortcut = QShortcut(QKeySequence("Ctrl+Shift+S"), self)
         self.save_as_script_shortcut.activated.connect(self.save_as_script)
-        self._loading_keybinds = False
         self._apply_keybinds()
 
     def _sample_sequential_actions(self) -> list[Action]:
@@ -216,32 +208,40 @@ class MainWindow(QMainWindow):
         bar = QFrame()
         bar.setObjectName("TopBar")
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(10)
+        layout.setContentsMargins(22, 16, 22, 16)
+        layout.setSpacing(12)
 
         logo = QLabel()
         logo_path = resource_path("zabian_logo.png")
         if logo_path.exists():
-            logo.setPixmap(QIcon(str(logo_path)).pixmap(30, 30))
+            logo.setPixmap(QIcon(str(logo_path)).pixmap(48, 48))
         layout.addWidget(logo)
 
+        title_stack = QVBoxLayout()
+        title_stack.setContentsMargins(0, 0, 0, 0)
+        title_stack.setSpacing(2)
         self.app_title_label = QLabel(APP_TITLE)
         self.app_title_label.setObjectName("AppTitle")
-        layout.addWidget(self.app_title_label)
+        title_stack.addWidget(self.app_title_label)
+        slogan = QLabel("Automation made simple.")
+        slogan.setObjectName("AppSlogan")
+        title_stack.addWidget(slogan)
+        layout.addLayout(title_stack)
         layout.addStretch(1)
 
         for label, icon_name in (
             ("New Script", "add"),
-            ("Save Script", "save"),
+            ("Save", "save"),
             ("Save As", "save"),
             ("Load Script", "load"),
         ):
             button = QPushButton(label)
+            button.setObjectName("HeaderButton")
             self._set_icon(button, icon_name)
-            button.setMinimumWidth(112)
+            button.setMinimumWidth(116)
             if label == "New Script":
                 button.clicked.connect(self.new_script)
-            elif label == "Save Script":
+            elif label == "Save":
                 button.clicked.connect(self.save_script)
             elif label == "Save As":
                 button.clicked.connect(self.save_as_script)
@@ -250,6 +250,28 @@ class MainWindow(QMainWindow):
             if label in {"New Script", "Load Script"}:
                 self.script_mutation_buttons.append(button)
             layout.addWidget(button)
+
+        divider = QFrame()
+        divider.setObjectName("HeaderDivider")
+        divider.setFixedWidth(1)
+        layout.addWidget(divider)
+
+        self.start_button = QPushButton("Start")
+        self.start_button.setObjectName("PrimaryAction")
+        self._set_icon(self.start_button, "start")
+        self.start_button.setMinimumWidth(150)
+        self.start_button.setMinimumHeight(42)
+        self.start_button.clicked.connect(self.toggle_run)
+        layout.addWidget(self.start_button)
+
+        self.pause_button = QPushButton("Pause")
+        self.pause_button.setObjectName("HeaderButton")
+        self._set_icon(self.pause_button, "pause")
+        self.pause_button.setMinimumWidth(150)
+        self.pause_button.setMinimumHeight(42)
+        self.pause_button.setEnabled(False)
+        self.pause_button.clicked.connect(self.toggle_pause)
+        layout.addWidget(self.pause_button)
 
         return bar
 
@@ -261,10 +283,10 @@ class MainWindow(QMainWindow):
     def _build_sidebar(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("Sidebar")
-        panel.setFixedWidth(264)
+        panel.setFixedWidth(232)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(14, 18, 14, 14)
-        layout.setSpacing(10)
+        layout.setContentsMargins(12, 16, 12, 14)
+        layout.setSpacing(7)
 
         self.sidebar_section_labels: list[QLabel] = []
         current_script_label = self._sidebar_section_label("Current Script")
@@ -283,7 +305,7 @@ class MainWindow(QMainWindow):
         for item in self.primary_sidebar_items:
             layout.addWidget(item)
 
-        layout.addSpacing(6)
+        layout.addSpacing(4)
         action_library_label = self._sidebar_section_label("Action Library Settings")
         self.sidebar_section_labels.append(action_library_label)
         layout.addWidget(action_library_label)
@@ -359,96 +381,50 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.tabs)
         return panel
 
-    def _build_right_panel(self) -> QWidget:
-        panel = QFrame()
-        panel.setObjectName("RightPanel")
-        panel.setFixedWidth(340)
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(14, 18, 18, 18)
-        layout.setSpacing(14)
+    def _build_status_bar(self) -> QWidget:
+        bar = QFrame()
+        bar.setObjectName("BottomStatusBar")
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(24, 12, 24, 12)
+        layout.setSpacing(18)
 
-        title = QLabel("Run Controls")
-        title.setObjectName("SectionTitle")
-        layout.addWidget(title)
-
-        self.start_button = QPushButton("Start")
-        self.start_button.setObjectName("PrimaryAction")
-        self._set_icon(self.start_button, "start")
-        self.start_button.setMinimumHeight(42)
-        self.start_button.clicked.connect(self.toggle_run)
-        layout.addWidget(self.start_button)
-
-        self.pause_button = QPushButton("Pause")
-        self._set_icon(self.pause_button, "pause")
-        self.pause_button.setMinimumHeight(40)
-        self.pause_button.setEnabled(False)
-        self.pause_button.clicked.connect(self.toggle_pause)
-        layout.addWidget(self.pause_button)
-
-        keybind_card = self._info_card("Keybinds")
-        keybind_layout = keybind_card.layout()
-        keybind_layout.addWidget(self._keybind_row("Start", self.app_settings.start_keybind, "start_key_input"))
-        keybind_layout.addWidget(self._keybind_row("Pause", self.app_settings.pause_keybind, "pause_key_input"))
-        layout.addWidget(keybind_card)
-
-        status_card = self._info_card("Status")
-        status_layout = status_card.layout()
         self.status_text = QLabel("Ready")
-        self.status_text.setWordWrap(True)
-        status_layout.addWidget(self._status_row(self.status_text, "•"))
+        self.status_text.setWordWrap(False)
+        layout.addWidget(self._status_row(self.status_text, "ready"))
+        layout.addWidget(self._status_divider())
+
         self.run_time_value = QLabel("00:00:00")
         self.run_time_value.setObjectName("MetricValue")
-        status_layout.addWidget(self._metric_row("Run Time", self.run_time_value))
+        layout.addWidget(self._metric_row("Run Time", self.run_time_value))
+        layout.addWidget(self._status_divider())
+
         self.progress_value = QLabel("0s / 0s (0%)")
         self.progress_value.setObjectName("MetricValue")
-        status_layout.addWidget(self._metric_row("Progress", self.progress_value))
+        layout.addWidget(self._metric_row("Progress", self.progress_value))
         self.progress_bar = QProgressBar()
         self.progress_bar.setObjectName("ProgressBar")
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setRange(0, 1)
         self.progress_bar.setValue(0)
-        self.progress_bar.setFixedHeight(10)
-        status_layout.addWidget(self.progress_bar)
-        layout.addWidget(status_card)
-        layout.addStretch(1)
-        return panel
+        self.progress_bar.setFixedHeight(9)
+        self.progress_bar.setFixedWidth(220)
+        layout.addWidget(self.progress_bar)
 
-    def _info_card(self, title: str) -> QFrame:
-        card = QFrame()
-        card.setObjectName("InfoCard")
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(12)
-        label = QLabel(title)
-        label.setObjectName("CardTitle")
-        layout.addWidget(label)
-        return card
-
-    def _keybind_row(self, label: str, value: str, attribute_name: str) -> QWidget:
-        row = QWidget()
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
-        layout.addWidget(QLabel(label))
-        field = KeyCaptureLineEdit(value)
-        field.setToolTip("Click here, then press the key or key combination to assign.")
-        field.setFixedWidth(180)
-        field.textChanged.connect(self._apply_keybinds)
-        field.captureFocusChanged.connect(self._set_keybind_capture_active)
-        setattr(self, attribute_name, field)
-        layout.addWidget(field)
         layout.addStretch(1)
-        return row
+        return bar
+
+    def _status_divider(self) -> QFrame:
+        divider = QFrame()
+        divider.setObjectName("StatusDivider")
+        divider.setFixedWidth(1)
+        divider.setFixedHeight(28)
+        return divider
 
     def _apply_keybinds(self) -> None:
-        if hasattr(self, "start_shortcut") and hasattr(self, "start_key_input"):
-            self._set_shortcut_sequence(self.start_shortcut, self.start_key_input.text())
-        if hasattr(self, "pause_shortcut") and hasattr(self, "pause_key_input"):
-            self._set_shortcut_sequence(self.pause_shortcut, self.pause_key_input.text())
-        if not self._loading_keybinds and hasattr(self, "start_key_input") and hasattr(self, "pause_key_input"):
-            self.app_settings.start_keybind = self.start_key_input.text().strip()
-            self.app_settings.pause_keybind = self.pause_key_input.text().strip()
-            self._save_app_settings_silent()
+        if hasattr(self, "start_shortcut"):
+            self._set_shortcut_sequence(self.start_shortcut, self.app_settings.start_keybind)
+        if hasattr(self, "pause_shortcut"):
+            self._set_shortcut_sequence(self.pause_shortcut, self.app_settings.pause_keybind)
         if hasattr(self, "start_button"):
             self._refresh_run_button_labels()
 
@@ -466,28 +442,29 @@ class MainWindow(QMainWindow):
         if not active:
             self._apply_keybinds()
 
-    def _keybind_suffix(self, field_name: str) -> str:
-        if not hasattr(self, field_name):
-            return ""
-        key_text = getattr(self, field_name).text().strip()
+    def _keybind_suffix(self, setting_name: str) -> str:
+        key_text = str(getattr(self.app_settings, setting_name, "")).strip()
         return f" ({key_text})" if key_text else ""
 
     def _refresh_run_button_labels(self) -> None:
         if hasattr(self, "start_button"):
             start_label = "Stop" if self.run_controls_active else "Start"
-            self.start_button.setText(f"{start_label}{self._keybind_suffix('start_key_input')}")
+            self.start_button.setText(f"{start_label}{self._keybind_suffix('start_keybind')}")
         if hasattr(self, "pause_button"):
             pause_label = "Unpause" if self.runner.is_paused else "Pause"
-            self.pause_button.setText(f"{pause_label}{self._keybind_suffix('pause_key_input')}")
+            self.pause_button.setText(f"{pause_label}{self._keybind_suffix('pause_keybind')}")
 
-    def _status_row(self, label: str | QLabel, icon_text: str) -> QWidget:
+    def _status_row(self, label: str | QLabel, icon_name: str) -> QWidget:
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
-        dot = QLabel(icon_text)
-        dot.setStyleSheet("color: #22c55e; font-size: 18px;")
-        layout.addWidget(dot)
+        icon = QLabel()
+        icon.setObjectName("StatusIcon")
+        icon.setAlignment(Qt.AlignCenter)
+        icon.setPixmap(app_icon(icon_name, size=16, dark=self.dark_theme).pixmap(16, 16))
+        self.status_icon_labels.append((icon, icon_name, 16))
+        layout.addWidget(icon)
         layout.addWidget(label if isinstance(label, QLabel) else QLabel(label))
         layout.addStretch(1)
         return row
@@ -543,7 +520,7 @@ class MainWindow(QMainWindow):
             title += " *"
         self.setWindowTitle(title)
         if hasattr(self, "app_title_label"):
-            self.app_title_label.setText(title)
+            self.app_title_label.setText(APP_TITLE)
 
     def current_group(self) -> str:
         return "Sequential" if self.tabs.currentIndex() == 0 else "Background"
@@ -862,8 +839,7 @@ class MainWindow(QMainWindow):
     def edit_defaults(self) -> None:
         if self._editing_locked:
             return
-        row = self.current_row()
-        template = Action.from_dict(self.current_model().actions[row].to_dict()) if row >= 0 else self._top_visible_action_template()
+        template = self._top_visible_action_template()
         editor = ActionEditorDialog(template, self.action_choices(), self.preset_store, self, "Edit Default Actions")
 
         def accept(result: Action) -> None:
@@ -1320,6 +1296,7 @@ class MainWindow(QMainWindow):
             key_press_delay_min_ms=self.app_settings.key_press_delay_min_ms,
             key_press_delay_max_ms=self.app_settings.key_press_delay_max_ms,
         )
+        self._apply_keybinds()
         self.apply_theme(self.app_settings.dark_mode)
         pending_release = self._pending_update_release
         self._pending_update_release = None
@@ -1563,29 +1540,68 @@ class MainWindow(QMainWindow):
     def open_tutorial(self) -> None:
         dialog = QDialog(self)
         dialog.setWindowTitle("Anz Clicker Tutorial")
+        dialog.setObjectName("TutorialDialog")
         layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 16, 20, 14)
+        layout.setSpacing(9)
+
+        header = QHBoxLayout()
+        header.setSpacing(14)
+        hero_icon = QLabel()
+        hero_icon.setObjectName("TutorialHeroIcon")
+        hero_icon.setAlignment(Qt.AlignCenter)
+        hero_icon.setPixmap(app_icon("book", size=30, dark=self.dark_theme).pixmap(30, 30))
+        header.addWidget(hero_icon)
+
+        title_stack = QVBoxLayout()
+        title_stack.setSpacing(2)
         title = QLabel("How Anz Clicker Works")
-        title.setObjectName("SectionTitle")
-        layout.addWidget(title)
+        title.setObjectName("DialogTitle")
+        subtitle = QLabel("A quick guide to building and running automation scripts.")
+        subtitle.setObjectName("DialogSubtitle")
+        title_stack.addWidget(title)
+        title_stack.addWidget(subtitle)
+        header.addLayout(title_stack, 1)
+        layout.addLayout(header)
+
         sections = [
-            ("Adding Actions", "Use Add Action to add an action to the queue. When added, it will automatically get added to the list of Sequential Actions. It can be moved to the Background Actions tab manually to be ran in the background."),
-            ("Sequential Actions", "These run one at a time from top to bottom. Each action uses its corresponding delay, occurs, then moves on to the next in the list. The repeat fields above this pane repeat the entire sequence, including all delays."),
-            ("Background Actions", "These start alongside the sequential actions immediately on script start. Each background action follows its own delay and repeat settings while the sequential actions iterate."),
-            ("Mouse Areas", "For mouse actions, enable Random Location for Mouse Action, click the area button, then drag the region you want. View Area lets you move and resave that box."),
-            ("Custom Actions and Defaults", "Save as Custom Action button saves a configured action for reuse, and adds it to the list of available actions. Edit Default Actions changes what future actions load with. Edit Action Order allows you to change the default order of actions in the list, as well as allows you to hide unused actions from the list."),
-            ("Saving Scripts", "Save Script writes both action panes and sequence repeat settings to a JSON file. Load Script loads all saved settings from a file."),
+            ("add", "Adding Actions", "Use Add Action to add an action to the queue. When added, it will automatically get added to the list of Sequential Actions. It can be moved to the Background Actions tab manually to be ran in the background."),
+            ("sequential", "Sequential Actions", "These run one at a time from top to bottom. Each action uses its corresponding delay, occurs, then moves on to the next in the list. The repeat fields above this pane repeat the entire sequence, including all delays."),
+            ("clock", "Background Actions", "These start alongside the sequential actions immediately on script start. Each background action follows its own delay and repeat settings while the sequential actions iterate."),
+            ("mouse", "Mouse Areas", "For mouse actions, enable Random Location for Mouse Action, click the area button, then drag the region you want. View Area lets you move and resave that box."),
+            ("settings", "Custom Actions and Defaults", "Save as Custom Action button saves a configured action for reuse, and adds it to the list of available actions. Edit Default Actions changes what future actions load with. Edit Action Order allows you to change the default order of actions in the list, as well as allows you to hide unused actions from the list."),
+            ("save", "Saving Scripts", "Save Script writes both action panes and sequence repeat settings to a JSON file. Load Script loads all saved settings from a file."),
         ]
-        for heading, body in sections:
+        for icon_name, heading, body in sections:
+            card = QFrame()
+            card.setObjectName("TutorialSection")
+            row = QHBoxLayout(card)
+            row.setContentsMargins(13, 9, 13, 9)
+            row.setSpacing(14)
+            icon_label = QLabel()
+            icon_label.setObjectName("TutorialSectionIcon")
+            icon_label.setAlignment(Qt.AlignCenter)
+            icon_label.setPixmap(app_icon(icon_name, size=26, dark=self.dark_theme).pixmap(26, 26))
+            row.addWidget(icon_label)
+            text_stack = QVBoxLayout()
+            text_stack.setSpacing(4)
             heading_label = QLabel(heading)
-            heading_label.setObjectName("CardTitle")
+            heading_label.setObjectName("TutorialSectionTitle")
             body_label = QLabel(body)
+            body_label.setObjectName("TutorialSectionBody")
             body_label.setWordWrap(True)
-            layout.addWidget(heading_label)
-            layout.addWidget(body_label)
-        buttons = QDialogButtonBox(QDialogButtonBox.Close)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
-        dialog.resize(620, 520)
+            text_stack.addWidget(heading_label)
+            text_stack.addWidget(body_label)
+            row.addLayout(text_stack, 1)
+            layout.addWidget(card)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(dialog.accept)
+        button_row.addWidget(close_button)
+        layout.addLayout(button_row)
+        dialog.resize(840, 620)
         dialog.exec()
 
     def closeEvent(self, event) -> None:
@@ -1606,6 +1622,8 @@ class MainWindow(QMainWindow):
         self.setPalette(palette)
         for button, name, size in self.icon_buttons:
             button.setIcon(app_icon(name, size=size, dark=dark))
+        for label, name, size in self.status_icon_labels:
+            label.setPixmap(app_icon(name, size=size, dark=dark).pixmap(size, size))
         self.sequential_pane.set_theme(dark)
         self.background_pane.set_theme(dark)
         self.sequential_pane.apply_icons(dark)
