@@ -4,6 +4,8 @@ All notable Anz Clicker changes are grouped by version. The current source versi
 
 ## Unreleased
 
+## 1.5.0 - 2026-06-28
+
 - Began the v1.5 UI overhaul with a more compact workspace: run controls moved into the header, status/progress moved to a bottom bar, the right sidebar was removed from the active layout, action queue controls were simplified, and empty queues now show a guided empty state.
 - Moved Start/Pause keybind editing into Settings, added duplicate-keybind validation, kept run button keybind labels synchronized, and cleaned up status/header text backgrounds.
 - Tightened the v1.5 workspace width, narrowed and refined the sidebar buttons, and attached the Sequential/Background tabs visually to the action pane.
