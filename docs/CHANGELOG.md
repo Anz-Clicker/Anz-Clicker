@@ -4,6 +4,16 @@ All notable Anz Clicker changes are grouped by version. The current source versi
 
 ## Unreleased
 
+- Improved long-list drag reordering by adding edge auto-scroll and wheel-scroll support while dragging actions in the main queues and Edit Action Order.
+- Tuned drag scrolling to move at a controlled pace and route mouse-wheel events to the active drag list while reordering.
+- Replaced native drag loops with app-managed drag reordering so wheel scrolling works while dragging in action queues and Edit Action Order.
+- Re-anchored drag insertion indicators after list scrolling so the placement line follows the current viewport while reordering.
+- Highlighted Sequential/Background tabs while dragging actions over a valid destination tab.
+- Stabilized the bottom run status layout by using lane-level running messages and fixed-width status metrics.
+- Highlighted the active sequential action row while scripts run, and disabled user row selection/hover highlights during execution.
+- Tightened bottom Run Time and Progress label spacing so metric values read more clearly while staying fixed in place.
+- Grouped the bottom progress bar directly beside the Progress time text.
+
 ## 1.5.0 - 2026-06-28
 
 - Began the v1.5 UI overhaul with a more compact workspace: run controls moved into the header, status/progress moved to a bottom bar, the right sidebar was removed from the active layout, action queue controls were simplified, and empty queues now show a guided empty state.

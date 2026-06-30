@@ -390,17 +390,20 @@ class MainWindow(QMainWindow):
 
         self.status_text = QLabel("Ready")
         self.status_text.setWordWrap(False)
-        layout.addWidget(self._status_row(self.status_text, "ready"))
+        status_row = self._status_row(self.status_text, "ready")
+        status_row.setFixedWidth(260)
+        layout.addWidget(status_row)
         layout.addWidget(self._status_divider())
 
         self.run_time_value = QLabel("00:00:00")
         self.run_time_value.setObjectName("MetricValue")
-        layout.addWidget(self._metric_row("Run Time", self.run_time_value))
+        run_time_row = self._metric_row("Run Time", self.run_time_value)
+        run_time_row.setFixedWidth(178)
+        layout.addWidget(run_time_row)
         layout.addWidget(self._status_divider())
 
         self.progress_value = QLabel("0s / 0s (0%)")
         self.progress_value.setObjectName("MetricValue")
-        layout.addWidget(self._metric_row("Progress", self.progress_value))
         self.progress_bar = QProgressBar()
         self.progress_bar.setObjectName("ProgressBar")
         self.progress_bar.setTextVisible(False)
@@ -408,7 +411,9 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.progress_bar.setFixedHeight(9)
         self.progress_bar.setFixedWidth(220)
-        layout.addWidget(self.progress_bar)
+        progress_row = self._metric_row("Progress", self.progress_value, trailing_widget=self.progress_bar)
+        progress_row.setFixedWidth(480)
+        layout.addWidget(progress_row)
 
         layout.addStretch(1)
         return bar
@@ -469,15 +474,19 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
         return row
 
-    def _metric_row(self, label: str, value: str | QLabel) -> QWidget:
+    def _metric_row(self, label: str, value: str | QLabel, trailing_widget: QWidget | None = None) -> QWidget:
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
         layout.addWidget(QLabel(label))
-        layout.addStretch(1)
         value_label = value if isinstance(value, QLabel) else QLabel(value)
         value_label.setObjectName("MetricValue")
         layout.addWidget(value_label)
+        if trailing_widget is not None:
+            layout.addSpacing(8)
+            layout.addWidget(trailing_widget)
+        layout.addStretch(1)
         return row
 
     def _replace_icon_registration(self, button: QPushButton, name: str, size: int) -> None:
@@ -1153,6 +1162,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Invalid Repeat Count", "Sequential repeat counts must be whole numbers.")
             return
         sequential_cycles = base_cycles + (random.randint(1, random_cycles) if random_cycles else 0)
+        self._clear_action_selection_and_active_rows()
         try:
             self.runner.start(actions, sequential_cycles=sequential_cycles)
         except RuntimePlanError as exc:
@@ -1177,15 +1187,18 @@ class MainWindow(QMainWindow):
         self.start_button.setIcon(self._make_icon("stop"))
         self.pause_button.setEnabled(True)
         self._refresh_run_button_labels()
-        self._set_status("Running")
 
     def _set_status(self, text: str) -> None:
         if text.startswith(ActionRunner.PROGRESS_PREFIX):
             self._handle_progress_status(text.removeprefix(ActionRunner.PROGRESS_PREFIX))
             return
+        if text.startswith(ActionRunner.ACTIVE_SEQUENTIAL_PREFIX):
+            self._set_active_sequential_row(text.removeprefix(ActionRunner.ACTIVE_SEQUENTIAL_PREFIX))
+            return
         if hasattr(self, "status_text"):
             self.status_text.setText(text)
         if text in {"Stopped", "Completed"} or text.startswith("Error:"):
+            self._set_active_sequential_row("-1")
             if text == "Completed":
                 self.run_progress_completed = True
                 self.run_progress_current = self.run_progress_total
@@ -1217,6 +1230,24 @@ class MainWindow(QMainWindow):
         except ValueError:
             return
         self._update_progress_label()
+
+    def _set_active_sequential_row(self, row_text: str) -> None:
+        try:
+            row = int(row_text)
+        except ValueError:
+            row = -1
+        if hasattr(self, "sequential_pane"):
+            self.sequential_pane.table.set_active_row(row)
+
+    def _clear_action_selection_and_active_rows(self, clear_active: bool = True) -> None:
+        if not hasattr(self, "sequential_pane") or not hasattr(self, "background_pane"):
+            return
+        for pane in (self.sequential_pane, self.background_pane):
+            pane.table.clearSelection()
+            pane.table.hovered_row = -1
+            if clear_active:
+                pane.table.set_active_row(-1)
+            pane.table.viewport().update()
 
     def _update_progress_label(self) -> None:
         if not hasattr(self, "progress_value"):
@@ -1657,6 +1688,8 @@ class MainWindow(QMainWindow):
 
     def _set_script_editing_locked(self, locked: bool) -> None:
         self._editing_locked = locked
+        if locked:
+            self._clear_action_selection_and_active_rows(clear_active=False)
         self.sequential_pane.set_editing_locked(locked)
         self.background_pane.set_editing_locked(locked)
         self.action_tab_bar.set_editing_locked(locked)

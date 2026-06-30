@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
-from PySide6.QtCore import QCoreApplication, QEvent, QItemSelectionModel, QMimeData, QModelIndex, QPoint, QRect, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QDrag, QHelpEvent, QIcon, QKeyEvent, QMouseEvent, QPainter, QPainterPath, QPen, QRegion
+from PySide6.QtCore import QCoreApplication, QEvent, QItemSelectionModel, QMimeData, QModelIndex, QObject, QPoint, QRect, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QCursor, QHelpEvent, QIcon, QKeyEvent, QMouseEvent, QPainter, QPainterPath, QPen, QRegion
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -37,6 +38,81 @@ from .icons import app_icon
 
 PICTURE_ACTIONS = {ActionType.WAIT_FOR_PICTURE.value, ActionType.AUTO_PICTURE_CLICKER.value}
 ACTION_DRAG_MIME = "application/x-anz-clicker-action-row"
+_ACTIVE_DRAG_SCROLL_VIEW: QAbstractItemView | None = None
+_DRAG_WHEEL_FILTER: "DragWheelScrollFilter | None" = None
+
+
+class DragWheelScrollFilter(QObject):
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() == QEvent.Wheel and _ACTIVE_DRAG_SCROLL_VIEW is not None:
+            handled = scroll_view_by_wheel(_ACTIVE_DRAG_SCROLL_VIEW, event)
+            if handled:
+                updater = getattr(_ACTIVE_DRAG_SCROLL_VIEW, "_update_manual_drag", None)
+                if callable(updater):
+                    updater(_ACTIVE_DRAG_SCROLL_VIEW.viewport().mapFromGlobal(QCursor.pos()))
+            return handled
+        return False
+
+
+def set_active_drag_scroll_view(view: QAbstractItemView | None) -> None:
+    global _ACTIVE_DRAG_SCROLL_VIEW, _DRAG_WHEEL_FILTER
+    app = QApplication.instance()
+    if app is None:
+        _ACTIVE_DRAG_SCROLL_VIEW = view
+        return
+    if view is not None:
+        if _DRAG_WHEEL_FILTER is None:
+            _DRAG_WHEEL_FILTER = DragWheelScrollFilter(app)
+            app.installEventFilter(_DRAG_WHEEL_FILTER)
+        _ACTIVE_DRAG_SCROLL_VIEW = view
+        return
+    _ACTIVE_DRAG_SCROLL_VIEW = None
+
+
+def scroll_view_for_drag(view: QAbstractItemView, position: QPoint, margin: int = 56) -> bool:
+    scrollbar = view.verticalScrollBar()
+    if scrollbar.minimum() == scrollbar.maximum():
+        return False
+    height = view.viewport().height()
+    direction = 0
+    distance = 0
+    if position.y() < margin:
+        direction = -1
+        distance = margin - position.y()
+    elif position.y() > height - margin:
+        direction = 1
+        distance = position.y() - (height - margin)
+    if direction == 0:
+        return False
+    now = time.monotonic()
+    last_scroll = getattr(view, "_last_drag_edge_scroll_at", 0.0)
+    if now - last_scroll < 0.12:
+        return False
+    setattr(view, "_last_drag_edge_scroll_at", now)
+    step = max(scrollbar.singleStep(), 1)
+    old_value = scrollbar.value()
+    scrollbar.setValue(old_value + direction * step)
+    return scrollbar.value() != old_value
+
+
+def scroll_view_by_wheel(view: QAbstractItemView, event) -> bool:
+    scrollbar = view.verticalScrollBar()
+    if scrollbar.minimum() == scrollbar.maximum():
+        return False
+    delta = event.pixelDelta().y() or event.angleDelta().y()
+    if not delta:
+        return False
+    old_value = scrollbar.value()
+    if event.pixelDelta().y():
+        scrollbar.setValue(old_value - delta)
+    else:
+        steps = max(1, abs(delta) // 120)
+        direction = -1 if delta > 0 else 1
+        scrollbar.setValue(old_value + direction * scrollbar.singleStep() * 3 * steps)
+    if scrollbar.value() == old_value:
+        return False
+    event.accept()
+    return True
 
 
 def style_dialog_buttons(buttons: QDialogButtonBox) -> None:
@@ -297,7 +373,9 @@ class ActionTableModel(QAbstractTableModel):
     def flags(self, index: QModelIndex) -> Qt.ItemFlags:
         if not index.isValid():
             return Qt.ItemIsDropEnabled if not self.editing_locked else Qt.NoItemFlags
-        flags = Qt.ItemIsSelectable | Qt.ItemIsEnabled
+        flags = Qt.ItemIsEnabled
+        if not self.editing_locked:
+            flags |= Qt.ItemIsSelectable
         if not self.editing_locked:
             flags |= Qt.ItemIsDragEnabled | Qt.ItemIsDropEnabled
         if index.column() == 1 and not self.editing_locked:
@@ -498,8 +576,12 @@ class RowHoverDelegate(QStyledItemDelegate):
     def _row_option(self, option, index: QModelIndex) -> QStyleOptionViewItem:
         row_option = QStyleOptionViewItem(option)
         table = self.parent()
-        if isinstance(table, ActionTableView) and index.row() == table.hovered_row:
-            row_option.state |= QStyle.State_MouseOver
+        if isinstance(table, ActionTableView):
+            if index.row() == table.active_row:
+                row_option.state |= QStyle.State_Selected
+                row_option.state &= ~QStyle.State_MouseOver
+            elif not table.editing_locked and index.row() == table.hovered_row:
+                row_option.state |= QStyle.State_MouseOver
         return row_option
 
     def paint(self, painter: QPainter, option, index: QModelIndex) -> None:
@@ -559,6 +641,9 @@ class ActionDropIndicator(QWidget):
         self.hide()
 
     def set_target(self, line_y: int) -> None:
+        parent = self.parentWidget()
+        if parent is not None:
+            self.setGeometry(parent.rect())
         self.line_y = max(3, min(line_y, self.height() - 4))
         self.show()
         self.raise_()
@@ -594,6 +679,15 @@ class ActionTableView(QTableView):
         self.editing_locked = False
         self.hovered_row = -1
         self.dragging_row = -1
+        self.active_row = -1
+        self._pending_drag_pos: QPoint | None = None
+        self._pending_drag_row = -1
+        self._pending_drag_rows: list[int] = []
+        self._manual_drag_active = False
+        self._manual_drag_source_rows: list[int] = []
+        self._manual_drag_target_group = ""
+        self._manual_drag_insertion_row = -1
+        self._manual_drag_tab_bar: ActionTabBar | None = None
         self.setObjectName("ActionTableView")
         self.setModel(model)
         self.setSelectionBehavior(QTableView.SelectRows)
@@ -608,11 +702,14 @@ class ActionTableView(QTableView):
         self.viewport().setToolTip("")
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
-        self.setDragEnabled(True)
-        self.setAcceptDrops(True)
+        self.setDragEnabled(False)
+        self.setAcceptDrops(False)
         self.setDropIndicatorShown(False)
-        self.setDragDropMode(QAbstractItemView.DragDrop)
+        self.setDragDropMode(QAbstractItemView.NoDragDrop)
+        self.setDragDropOverwriteMode(False)
         self.setDefaultDropAction(Qt.MoveAction)
+        self.setAutoScroll(True)
+        self.setAutoScrollMargin(56)
         self.setWordWrap(False)
         self.horizontalHeader().setStretchLastSection(True)
         self.horizontalHeader().setHighlightSections(False)
@@ -670,6 +767,21 @@ class ActionTableView(QTableView):
         return super().viewportEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._manual_drag_active:
+            self._update_manual_drag(event.position().toPoint())
+            event.accept()
+            return
+        if (
+            not self.editing_locked
+            and self._pending_drag_row >= 0
+            and event.buttons() & Qt.LeftButton
+            and self._pending_drag_pos is not None
+            and (event.position().toPoint() - self._pending_drag_pos).manhattanLength() >= QApplication.startDragDistance()
+        ):
+            self._begin_manual_drag()
+            self._update_manual_drag(event.position().toPoint())
+            event.accept()
+            return
         row = self.indexAt(event.position().toPoint()).row()
         if row != self.hovered_row:
             self.hovered_row = row
@@ -677,7 +789,32 @@ class ActionTableView(QTableView):
         self.viewport().setCursor(Qt.OpenHandCursor if row >= 0 and not self.editing_locked else Qt.ArrowCursor)
         super().mouseMoveEvent(event)
 
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        super().mousePressEvent(event)
+        if event.button() != Qt.LeftButton or self.editing_locked:
+            self._clear_pending_drag()
+            return
+        row = self.indexAt(event.position().toPoint()).row()
+        if row < 0:
+            self._clear_pending_drag()
+            return
+        rows = self.selected_rows()
+        self._pending_drag_pos = event.position().toPoint()
+        self._pending_drag_row = row
+        self._pending_drag_rows = rows if row in rows else [row]
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.LeftButton and self._manual_drag_active:
+            self._finish_manual_drag()
+            event.accept()
+            return
+        self._clear_pending_drag()
+        super().mouseReleaseEvent(event)
+
     def leaveEvent(self, event) -> None:
+        if self._manual_drag_active:
+            super().leaveEvent(event)
+            return
         if self.hovered_row != -1:
             self.hovered_row = -1
             self.viewport().update()
@@ -697,42 +834,114 @@ class ActionTableView(QTableView):
 
     def set_editing_locked(self, locked: bool) -> None:
         self.editing_locked = locked
-        self.setDragEnabled(not locked)
-        self.setAcceptDrops(not locked)
+        model = self.model()
+        if hasattr(model, "set_editing_locked"):
+            model.set_editing_locked(locked)
+        self.hovered_row = -1
+        self._clear_pending_drag()
+        if locked:
+            self.clearSelection()
+            self.setSelectionMode(QAbstractItemView.NoSelection)
+            self.viewport().unsetCursor()
+        else:
+            self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.setDragEnabled(False)
+        self.setAcceptDrops(False)
+        self.viewport().update()
+
+    def set_active_row(self, row: int) -> None:
+        model = self.model()
+        row_count = model.rowCount() if model is not None else 0
+        next_row = row if 0 <= row < row_count else -1
+        if next_row == self.active_row:
+            return
+        previous_row = self.active_row
+        self.active_row = next_row
+        for changed_row in {previous_row, next_row}:
+            if changed_row >= 0 and model is not None:
+                self.viewport().update(self.visualRect(model.index(changed_row, 0)).united(self.visualRect(model.index(changed_row, model.columnCount() - 1))))
 
     def startDrag(self, supported_actions) -> None:
-        if self.editing_locked:
+        return
+
+    def _clear_pending_drag(self) -> None:
+        self._pending_drag_pos = None
+        self._pending_drag_row = -1
+        self._pending_drag_rows = []
+
+    def _begin_manual_drag(self) -> None:
+        if self._manual_drag_active or self._pending_drag_row < 0:
             return
-        row = self.currentIndex().row()
-        if row < 0:
-            return
-        rows = self.selected_rows()
-        if row not in rows:
-            rows = [row]
-        drag = QDrag(self)
-        drag.setMimeData(encode_action_drag(self.group_name, rows))
-        row_rect = self.visualRect(self.model().index(row, 0))
-        row_rect.setRight(self.viewport().width())
-        source_pixmap = self.viewport().grab(row_rect)
-        pixmap = source_pixmap.copy()
-        pixmap.fill(Qt.transparent)
-        painter = QPainter(pixmap)
-        painter.setOpacity(0.88)
-        painter.drawPixmap(0, 0, source_pixmap)
-        painter.setOpacity(1.0)
-        painter.setPen(QPen(self.palette().highlight().color(), 2))
-        painter.drawRoundedRect(pixmap.rect().adjusted(1, 1, -2, -2), 7, 7)
-        painter.end()
-        drag.setPixmap(pixmap)
-        drag.setHotSpot(QPoint(min(30, pixmap.width() // 2), pixmap.height() // 2))
-        self.dragging_row = row
-        self.viewport().update()
+        self._manual_drag_active = True
+        self._manual_drag_source_rows = list(self._pending_drag_rows)
+        self._manual_drag_target_group = self.group_name
+        self._manual_drag_insertion_row = self._pending_drag_row
+        self.dragging_row = self._pending_drag_row
+        self._clear_pending_drag()
+        self.viewport().grabMouse(Qt.ClosedHandCursor)
         self.viewport().setCursor(Qt.ClosedHandCursor)
-        drag.exec(Qt.MoveAction)
-        self.dragging_row = -1
-        self.drop_indicator.clear_target()
+        set_active_drag_scroll_view(self)
         self.viewport().update()
+
+    def _update_manual_drag(self, position: QPoint) -> None:
+        scroll_view_for_drag(self, position)
+        tab_bar, tab_index, tab_group = self._tab_target_at_global(QCursor.pos())
+        if tab_bar is not self._manual_drag_tab_bar and self._manual_drag_tab_bar is not None:
+            self._manual_drag_tab_bar.clear_drop_target()
+        self._manual_drag_tab_bar = tab_bar
+        if tab_bar is not None and tab_group and tab_group != self.group_name:
+            tab_bar.set_drop_target(tab_index)
+            self._manual_drag_target_group = tab_group
+            self._manual_drag_insertion_row = 2**31 - 1
+            self.drop_indicator.clear_target()
+            return
+        if tab_bar is not None:
+            tab_bar.clear_drop_target()
+        self._manual_drag_target_group = self.group_name
+        viewport_rect = self.viewport().rect()
+        near_viewport = (
+            -80 <= position.y() <= viewport_rect.height() + 80
+            and 0 <= position.x() <= viewport_rect.width()
+        )
+        if viewport_rect.contains(position) or near_viewport:
+            insertion_row, line_y = self._drop_location(position)
+            self._manual_drag_insertion_row = insertion_row
+            self.drop_indicator.set_target(line_y)
+            return
+        self.drop_indicator.clear_target()
+
+    def _finish_manual_drag(self) -> None:
+        source_rows = list(self._manual_drag_source_rows)
+        target_group = self._manual_drag_target_group or self.group_name
+        insertion_row = self._manual_drag_insertion_row
+        self._manual_drag_active = False
+        self._manual_drag_source_rows = []
+        self._manual_drag_target_group = ""
+        self._manual_drag_insertion_row = -1
+        self.dragging_row = -1
+        if self._manual_drag_tab_bar is not None:
+            self._manual_drag_tab_bar.clear_drop_target()
+            self._manual_drag_tab_bar = None
+        set_active_drag_scroll_view(None)
+        self.drop_indicator.clear_target()
+        self.viewport().releaseMouse()
         self.viewport().unsetCursor()
+        self.viewport().update()
+        if source_rows and insertion_row >= 0:
+            self.actionDropped.emit(self.group_name, source_rows, target_group, insertion_row)
+
+    def _tab_target_at_global(self, global_pos: QPoint) -> tuple["ActionTabBar | None", int, str]:
+        widget = QApplication.widgetAt(global_pos)
+        while widget is not None:
+            if isinstance(widget, ActionTabBar):
+                tab_index = widget.tabAt(widget.mapFromGlobal(global_pos))
+                if tab_index == 0:
+                    return widget, tab_index, "Sequential"
+                if tab_index == 1:
+                    return widget, tab_index, "Background"
+                return widget, -1, ""
+            widget = widget.parentWidget()
+        return None, -1, ""
 
     def dragEnterEvent(self, event) -> None:
         if not self.editing_locked and decode_action_drag(event.mimeData()):
@@ -742,12 +951,20 @@ class ActionTableView(QTableView):
 
     def dragMoveEvent(self, event) -> None:
         if not self.editing_locked and decode_action_drag(event.mimeData()):
-            _insertion_row, line_y = self._drop_location(event.position().toPoint())
+            position = event.position().toPoint()
+            scroll_view_for_drag(self, position)
+            _insertion_row, line_y = self._drop_location(position)
             self.drop_indicator.set_target(line_y)
             event.acceptProposedAction()
             return
         self.drop_indicator.clear_target()
         event.ignore()
+
+    def wheelEvent(self, event) -> None:
+        if self._manual_drag_active and scroll_view_by_wheel(self, event):
+            self._update_manual_drag(self.viewport().mapFromGlobal(QCursor.pos()))
+            return
+        super().wheelEvent(event)
 
     def dragLeaveEvent(self, event) -> None:
         self.drop_indicator.clear_target()
@@ -766,6 +983,8 @@ class ActionTableView(QTableView):
         event.acceptProposedAction()
 
     def _drop_location(self, position: QPoint) -> tuple[int, int]:
+        if position.y() < 0:
+            return 0, 4
         index = self.indexAt(position)
         if index.isValid():
             rect = self.visualRect(index)
@@ -774,6 +993,8 @@ class ActionTableView(QTableView):
         row_count = self.model().rowCount()
         if row_count:
             last_rect = self.visualRect(self.model().index(row_count - 1, 0))
+            if position.y() > self.viewport().height():
+                return row_count, last_rect.bottom() + 1
             return row_count, last_rect.bottom() + 1
         return 0, 4
 
@@ -814,6 +1035,17 @@ class ActionTabBar(QTabBar):
         self.editing_locked = locked
         self.setAcceptDrops(not locked)
 
+    def set_drop_target(self, tab_index: int) -> None:
+        if self.editing_locked or tab_index < 0 or tab_index >= self.count():
+            self.clear_drop_target()
+            return
+        if tab_index != self.drop_target_index:
+            self.drop_target_index = tab_index
+            self.update()
+
+    def clear_drop_target(self) -> None:
+        self._clear_drop_target()
+
     def dragEnterEvent(self, event) -> None:
         if not self.editing_locked and decode_action_drag(event.mimeData()):
             event.acceptProposedAction()
@@ -823,9 +1055,7 @@ class ActionTabBar(QTabBar):
     def dragMoveEvent(self, event) -> None:
         tab_index = self.tabAt(event.position().toPoint())
         if not self.editing_locked and tab_index >= 0 and decode_action_drag(event.mimeData()):
-            if tab_index != self.drop_target_index:
-                self.drop_target_index = tab_index
-                self.update()
+            self.set_drop_target(tab_index)
             event.acceptProposedAction()
             return
         self._clear_drop_target()

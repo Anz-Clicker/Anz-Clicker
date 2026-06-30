@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QItemSelectionModel, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QMouseEvent
+from PySide6.QtGui import QColor, QCursor, QMouseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -29,7 +29,16 @@ from app_settings import AppSettings
 from .constants import APP_VERSION
 from .icons import app_icon
 from .paths import scripts_dir, storage_root
-from .widgets import KeyCaptureLineEdit, PlaceholderSpinBox, make_help_label, style_dialog_buttons
+from .widgets import (
+    ActionDropIndicator,
+    KeyCaptureLineEdit,
+    PlaceholderSpinBox,
+    make_help_label,
+    scroll_view_by_wheel,
+    scroll_view_for_drag,
+    set_active_drag_scroll_view,
+    style_dialog_buttons,
+)
 
 
 class ActionOrderListWidget(QListWidget):
@@ -37,19 +46,149 @@ class ActionOrderListWidget(QListWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._dragging = False
+        self._pending_drag_pos = None
+        self._pending_drag_row = -1
+        self._pending_drag_rows: list[int] = []
+        self._manual_drag_active = False
+        self._manual_drag_rows: list[int] = []
+        self._manual_insertion_row = -1
         self.setObjectName("ActionOrderList")
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.setDragEnabled(True)
-        self.setAcceptDrops(True)
-        self.setDropIndicatorShown(True)
-        self.setDragDropMode(QAbstractItemView.InternalMove)
+        self.setDragEnabled(False)
+        self.setAcceptDrops(False)
+        self.setDropIndicatorShown(False)
+        self.setDragDropMode(QAbstractItemView.NoDragDrop)
         self.setDragDropOverwriteMode(False)
         self.setDefaultDropAction(Qt.MoveAction)
         self.setAutoScroll(True)
         self.setAutoScrollMargin(56)
+        self.drop_indicator = ActionDropIndicator(self.viewport())
+        self.drop_indicator.setGeometry(self.viewport().rect())
 
-    def dropEvent(self, event) -> None:
-        super().dropEvent(event)
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.drop_indicator.setGeometry(self.viewport().rect())
+
+    def startDrag(self, supported_actions) -> None:
+        return
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        super().mousePressEvent(event)
+        if event.button() != Qt.LeftButton:
+            self._clear_pending_drag()
+            return
+        row = self.indexAt(event.position().toPoint()).row()
+        if row < 0:
+            self._clear_pending_drag()
+            return
+        rows = self._selected_rows()
+        self._pending_drag_pos = event.position().toPoint()
+        self._pending_drag_row = row
+        self._pending_drag_rows = rows if row in rows else [row]
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._manual_drag_active:
+            self._update_manual_drag(event.position().toPoint())
+            event.accept()
+            return
+        if (
+            self._pending_drag_row >= 0
+            and event.buttons() & Qt.LeftButton
+            and self._pending_drag_pos is not None
+            and (event.position().toPoint() - self._pending_drag_pos).manhattanLength() >= QApplication.startDragDistance()
+        ):
+            self._begin_manual_drag()
+            self._update_manual_drag(event.position().toPoint())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.LeftButton and self._manual_drag_active:
+            self._finish_manual_drag()
+            event.accept()
+            return
+        self._clear_pending_drag()
+        super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event) -> None:
+        if self._manual_drag_active and scroll_view_by_wheel(self, event):
+            self._update_manual_drag(self.viewport().mapFromGlobal(QCursor.pos()))
+            return
+        super().wheelEvent(event)
+
+    def _selected_rows(self) -> list[int]:
+        return sorted(index.row() for index in self.selectedIndexes())
+
+    def _clear_pending_drag(self) -> None:
+        self._pending_drag_pos = None
+        self._pending_drag_row = -1
+        self._pending_drag_rows = []
+
+    def _begin_manual_drag(self) -> None:
+        if self._manual_drag_active or self._pending_drag_row < 0:
+            return
+        self._manual_drag_active = True
+        self._dragging = True
+        self._manual_drag_rows = list(self._pending_drag_rows)
+        self._manual_insertion_row = self._pending_drag_row
+        self._clear_pending_drag()
+        self.viewport().grabMouse(Qt.ClosedHandCursor)
+        self.viewport().setCursor(Qt.ClosedHandCursor)
+        set_active_drag_scroll_view(self)
+
+    def _update_manual_drag(self, position) -> None:
+        scroll_view_for_drag(self, position)
+        insertion_row, line_y = self._drop_location(position)
+        self._manual_insertion_row = insertion_row
+        self.drop_indicator.set_target(line_y)
+
+    def _finish_manual_drag(self) -> None:
+        rows = list(self._manual_drag_rows)
+        insertion_row = self._manual_insertion_row
+        self._manual_drag_active = False
+        self._dragging = False
+        self._manual_drag_rows = []
+        self._manual_insertion_row = -1
+        set_active_drag_scroll_view(None)
+        self.drop_indicator.clear_target()
+        self.viewport().releaseMouse()
+        self.viewport().unsetCursor()
+        if rows and insertion_row >= 0:
+            self._move_rows_to(rows, insertion_row)
+
+    def _drop_location(self, position) -> tuple[int, int]:
+        if position.y() < 0:
+            return 0, 4
+        index = self.indexAt(position)
+        if index.isValid():
+            rect = self.visualItemRect(self.item(index.row()))
+            after = position.y() > rect.center().y()
+            return index.row() + (1 if after else 0), rect.bottom() + 1 if after else rect.top()
+        count = self.count()
+        if count:
+            last_rect = self.visualItemRect(self.item(count - 1))
+            if position.y() > self.viewport().height():
+                return count, last_rect.bottom() + 1
+            return count, last_rect.bottom() + 1
+        return 0, 4
+
+    def _move_rows_to(self, rows: list[int], insertion_row: int) -> None:
+        rows = sorted(set(row for row in rows if 0 <= row < self.count()))
+        if not rows:
+            return
+        adjusted_row = insertion_row - sum(1 for row in rows if row < insertion_row)
+        adjusted_row = max(0, min(adjusted_row, self.count() - len(rows)))
+        if adjusted_row == rows[0] and rows == list(range(rows[0], rows[0] + len(rows))):
+            return
+        items = [self.takeItem(row) for row in reversed(rows)]
+        items.reverse()
+        self.clearSelection()
+        for offset, item in enumerate(items):
+            self.insertItem(adjusted_row + offset, item)
+            item.setSelected(True)
+        self.setCurrentRow(adjusted_row, QItemSelectionModel.NoUpdate)
         self.orderChanged.emit()
 
 
