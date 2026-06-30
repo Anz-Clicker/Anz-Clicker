@@ -35,6 +35,7 @@ class PlannedActionRun:
     index: int = 1
     total_in_cycle: int = 1
     start_offset_ms: int = 0
+    source_row: int = -1
 
     @property
     def repeat_count(self) -> int:
@@ -51,6 +52,7 @@ class RuntimePlan:
 
 class ActionRunner:
     PROGRESS_PREFIX = "__progress__:"
+    ACTIVE_SEQUENTIAL_PREFIX = "__active_sequential__:"
 
     def __init__(self, status_callback: StatusCallback | None = None, settings: AppSettings | None = None) -> None:
         self._thread: threading.Thread | None = None
@@ -109,6 +111,8 @@ class ActionRunner:
         try:
             if plan.initial_background_runs:
                 self._start_parallel_runs(plan.initial_background_runs)
+                if not plan.sequential_runs:
+                    self._publish("Background actions running")
 
             for planned in plan.sequential_runs:
                 if self._stop_event.is_set():
@@ -119,14 +123,8 @@ class ActionRunner:
                     return
 
                 action = planned.action
-                if plan.sequential_cycles > 1:
-                    self._publish(
-                        f"Sequential cycle {planned.cycle}/{plan.sequential_cycles} - "
-                        f"{planned.index}/{planned.total_in_cycle}: {action.display_name()} "
-                        f"[{planned.repeat_count} run(s)]"
-                    )
-                else:
-                    self._publish(f"Sequential {planned.index}/{planned.total_in_cycle}: {action.display_name()} [{planned.repeat_count} run(s)]")
+                self._publish_active_sequential(planned.source_row)
+                self._publish("Sequential actions running")
                 if action.start_as_background:
                     self._start_parallel_runs([planned])
                     continue
@@ -134,8 +132,9 @@ class ActionRunner:
                     final_status = "Stopped"
                     return
 
+            self._publish_active_sequential(-1)
             if self._parallel_threads and not self._stop_event.is_set():
-                self._publish("Sequential actions complete.\nBackground actions:")
+                self._publish("Background actions running")
                 while not self._stop_event.is_set() and any(thread.is_alive() for thread in self._parallel_threads):
                     if not self._wait_if_paused():
                         final_status = "Stopped"
@@ -149,11 +148,13 @@ class ActionRunner:
         except Exception as exc:
             final_status = f"Error: {exc}"
         finally:
+            self._publish_active_sequential(-1)
             self._finish_progress(final_status == "Completed")
             self._publish(final_status)
 
     def _build_runtime_plan(self, actions: list[Action], sequential_cycles: int, script_stack: tuple[Path, ...] = ()) -> RuntimePlan:
-        sequential_actions = [action for action in actions if action.enabled and action.execution_group != ExecutionGroup.PARALLEL.value]
+        sequential_entries = [(index, action) for index, action in enumerate(actions) if action.enabled and action.execution_group != ExecutionGroup.PARALLEL.value]
+        sequential_actions = [action for _index, action in sequential_entries]
         background_actions = [action for action in actions if action.enabled and action.execution_group == ExecutionGroup.PARALLEL.value]
         projected_runs = (len(sequential_actions) * max(1, sequential_cycles)) + len(background_actions)
         if projected_runs > MAX_PLANNED_ACTION_RUNS:
@@ -168,8 +169,8 @@ class ActionRunner:
 
         total_in_cycle = len(sequential_actions)
         for cycle in range(1, sequential_cycles + 1):
-            for index, action in enumerate(sequential_actions, start=1):
-                planned = self._plan_action_run(action, cycle=cycle, index=index, total_in_cycle=total_in_cycle, start_offset_ms=sequential_elapsed_ms, script_stack=script_stack)
+            for index, (source_row, action) in enumerate(sequential_entries, start=1):
+                planned = self._plan_action_run(action, cycle=cycle, index=index, total_in_cycle=total_in_cycle, start_offset_ms=sequential_elapsed_ms, source_row=source_row, script_stack=script_stack)
                 sequential_runs.append(planned)
                 if action.start_as_background:
                     background_runs.append(planned)
@@ -200,6 +201,7 @@ class ActionRunner:
         index: int = 1,
         total_in_cycle: int = 1,
         start_offset_ms: int = 0,
+        source_row: int = -1,
         script_stack: tuple[Path, ...] = (),
     ) -> PlannedActionRun:
         repeat_count = self._sample_repeat_count(action)
@@ -209,7 +211,7 @@ class ActionRunner:
         nested_plans = None
         if action.action_type in {ActionType.LAUNCH_ANZ_SCRIPT.value, ActionType.LAUNCH_ANZ_SCRIPT_AND_WAIT.value}:
             nested_plans = [self._plan_nested_script(action.launch_path, script_stack) for _ in range(repeat_count)]
-        return PlannedActionRun(action=action, delays_ms=delays, nested_plans=nested_plans, cycle=cycle, index=index, total_in_cycle=total_in_cycle, start_offset_ms=start_offset_ms)
+        return PlannedActionRun(action=action, delays_ms=delays, nested_plans=nested_plans, cycle=cycle, index=index, total_in_cycle=total_in_cycle, start_offset_ms=start_offset_ms, source_row=source_row)
 
     @staticmethod
     def _sample_repeat_count(action: Action) -> int:
@@ -492,7 +494,7 @@ class ActionRunner:
     def _launch_nested_script(self, action: Action, *, wait: bool, plan: RuntimePlan | None = None) -> None:
         plan = plan or self._plan_nested_script(action.launch_path)
         if wait:
-            self._publish(f"Running nested script: {Path(action.launch_path).name}")
+            self._publish("Sequential actions running")
             if not self._run_plan_body(plan, wait_for_background=True):
                 raise InterruptedError("Nested script stopped.")
             return
@@ -502,7 +504,7 @@ class ActionRunner:
         thread.start()
 
     def _run_nested_script_thread(self, plan: RuntimePlan, name: str) -> None:
-        self._publish(f"Nested script started: {name}")
+        self._publish("Background actions running")
         self._run_plan_body(plan, wait_for_background=True)
 
     def _plan_nested_script(self, script_path: str, script_stack: tuple[Path, ...] = ()) -> RuntimePlan:
@@ -696,6 +698,9 @@ class ActionRunner:
 
     def _publish_progress(self, current: int, total: int) -> None:
         self._publish(f"{self.PROGRESS_PREFIX}{current}/{total}")
+
+    def _publish_active_sequential(self, row: int) -> None:
+        self._publish(f"{self.ACTIVE_SEQUENTIAL_PREFIX}{row}")
 
     def _apply_settings(self) -> None:
         screen_tools.configure_ocr(Path(__file__).resolve().parent.parent)
